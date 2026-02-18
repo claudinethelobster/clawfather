@@ -146,16 +146,6 @@ The web UI is served by the OpenClaw Gateway at `/clawfather/`. It features:
 - Auto-reconnect on disconnect
 - Mobile responsive
 
-### Auth
-
-The web UI authenticates to the OpenClaw Gateway using the same token/password as the Control UI. Pass it via URL parameter on first load:
-
-```
-https://clawfather.ai/clawfather/?token=YOUR_TOKEN#session=SESSION_ID
-```
-
-The token is stored in localStorage for subsequent visits.
-
 ## Architecture
 
 ### Plugin Components

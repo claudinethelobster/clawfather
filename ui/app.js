@@ -83,20 +83,7 @@
       gatewayUrl = `${proto}//${host}`;
     }
 
-    // Get auth token from localStorage or URL
-    const token = urlParams.get("token") || localStorage.getItem("clawfather_token") || "";
-    if (urlParams.get("token")) {
-      localStorage.setItem("clawfather_token", urlParams.get("token"));
-      // Clean URL
-      urlParams.delete("token");
-      const cleanSearch = urlParams.toString();
-      const newUrl = window.location.pathname + (cleanSearch ? "?" + cleanSearch : "") + window.location.hash;
-      window.history.replaceState(null, "", newUrl);
-    }
-
-    const connectParams = new URLSearchParams();
-    if (token) connectParams.set("token", token);
-    const wsUrl = gatewayUrl + (connectParams.toString() ? "?" + connectParams.toString() : "");
+    const wsUrl = gatewayUrl;
 
     ws = new WebSocket(wsUrl);
 
