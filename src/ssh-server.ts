@@ -130,7 +130,7 @@ async function handleInput(
   sessionStore.create(session);
 
   const protocol = config.webDomain === 'localhost' ? 'http' : 'https';
-  const url = `${protocol}://${config.webDomain}/#sessionId=${sessionId}`;
+  const url = `${protocol}://${config.webDomain}/#session=${sessionId}`;
 
   stream.write('\r\n');
   stream.write('\x1b[32m  ✓ Connected successfully!\x1b[0m\r\n\r\n');
