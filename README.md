@@ -14,9 +14,9 @@ Clawfather lets you connect to any server via SSH and get an AI assistant that c
                                   │                                       ▲
                                   │ session URL                           │
                                   ▼                                       │
-                          ┌───────────────┐    ssh_exec/upload/download   │
+                          ┌───────────────┐    native exec (ssh/scp)      │
                           │  Web Chat UI  │──▶ OpenClaw Gateway ──────────┘
-                          │  (browser)    │    (AI + tools)
+                          │  (browser)    │    (AI + exec tool)
                           └───────────────┘
 ```
 
@@ -75,15 +75,8 @@ Add to your OpenClaw config (`openclaw.json`):
       }
     }
   },
-  // Enable the agent tools
-  agents: {
-    list: [{
-      id: "main",
-      tools: {
-        allow: ["clawfather"]  // Enables ssh_exec, ssh_upload, ssh_download
-      }
-    }]
-  }
+  // No custom tools needed — Clawfather uses native OpenClaw exec tool
+  // Just ensure the exec tool is available to the agent (it is by default)
 }
 ```
 
@@ -169,20 +162,15 @@ The token is stored in localStorage for subsequent visits.
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| Plugin entry | `src/index.ts` | Registers tools, RPC, HTTP, and SSH service |
+| Plugin entry | `src/index.ts` | SSH server, HTTP server, session management |
 | SSH server | `src/ssh-server.ts` | Custom SSH2 server with agent forwarding |
-| SSH execution | `src/ssh-exec.ts` | Command execution via ControlMaster |
 | Session store | `src/sessions.ts` | In-memory session management |
 | Web UI | `ui/` | Static HTML/CSS/JS chat interface |
 | Admin skill | `skills/clawfather/` | AI instructions for server admin |
 
 ### Agent Tools
 
-| Tool | Description |
-|------|-------------|
-| `ssh_exec` | Execute a command on the remote server |
-| `ssh_upload` | Upload file content to the remote server |
-| `ssh_download` | Download (read) a file from the remote server |
+Clawfather does **not** register custom agent tools. Instead, the web UI injects an SSH ControlMaster prefix into the session context, and the agent uses OpenClaw's native `exec` tool to run `ssh` and `scp` commands through the established tunnel. This gives the agent full access to PTY mode, background processes, streaming output, and timeouts — all native OpenClaw capabilities.
 
 ### Gateway RPC
 

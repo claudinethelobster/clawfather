@@ -105,18 +105,46 @@
       reconnectDelay = 1000;
       addSystemMessage("Connected to gateway. Starting session...");
 
-      // Fetch session info via RPC
-      sendRpc("clawfather.session", { sessionId: sessionId });
+      // Fetch session info via HTTP API to get connection details
+      fetch("/api/session/" + sessionId)
+        .then(function (r) { return r.json(); })
+        .then(function (info) {
+          if (info.error) {
+            addSystemMessage("Error: " + info.error);
+            return;
+          }
 
-      // Load chat history
-      sendRpc("chat.history", { sessionKey: "clawfather:" + sessionId });
+          serverTarget = info.targetUser + "@" + info.targetHost;
+          $targetDisplay.textContent = serverTarget;
 
-      // Send initial context message
-      sendChat(
-        "[System: Clawfather session " + sessionId + " active. " +
-        "Use ssh_exec, ssh_upload, ssh_download tools with sessionId=\"" + sessionId + "\" " +
-        "to operate on the connected server. Start by running basic recon: hostname, uname -a, uptime.]"
-      );
+          var sshPrefix = "ssh -o ControlPath=" + info.controlPath +
+            " -o ControlMaster=no -o BatchMode=yes" +
+            (info.targetPort !== 22 ? " -p " + info.targetPort : "") +
+            " " + info.targetUser + "@" + info.targetHost;
+
+          var scpPrefix = "scp -o ControlPath=" + info.controlPath +
+            " -o ControlMaster=no -o BatchMode=yes" +
+            (info.targetPort !== 22 ? " -P " + info.targetPort : "");
+
+          // Load chat history
+          sendRpc("chat.history", { sessionKey: "clawfather:" + sessionId });
+
+          // Send initial context with SSH prefix for the agent
+          sendChat(
+            "[System: Clawfather session active. Connected to " + serverTarget + ".\n\n" +
+            "To run commands on the connected server, use the exec tool with:\n" +
+            sshPrefix + " <command>\n\n" +
+            "For interactive commands, use exec with pty:true.\n" +
+            "For long-running commands, use exec with background:true and poll with the process tool.\n\n" +
+            "For file transfers:\n" +
+            scpPrefix + " <local> " + info.targetUser + "@" + info.targetHost + ":<remote>\n" +
+            scpPrefix + " " + info.targetUser + "@" + info.targetHost + ":<remote> <local>\n\n" +
+            "Start by running basic recon: hostname, uname -a, uptime.]"
+          );
+        })
+        .catch(function (err) {
+          addSystemMessage("Failed to fetch session info: " + err.message);
+        });
     };
 
     ws.onmessage = function (event) {

@@ -3,7 +3,6 @@ import * as fs from 'fs';
 import * as http from 'http';
 import { startSSHServer } from './ssh-server';
 import { sessionStore } from './sessions';
-import { sshExec, sshUpload, sshDownload } from './ssh-exec';
 import { ClawfatherConfig } from './types';
 
 const DEFAULT_CONFIG: ClawfatherConfig = {
@@ -47,32 +46,13 @@ function startWebServer(config: ClawfatherConfig): http.Server {
         res.end(JSON.stringify({
           sessionId: session.sessionId, targetHost: session.targetHost,
           targetUser: session.targetUser, targetPort: session.targetPort,
+          controlPath: session.controlPath,
           connectedAt: session.connectedAt,
         }));
       } else {
         res.writeHead(404);
         res.end(JSON.stringify({ error: 'Session not found or expired' }));
       }
-      return;
-    }
-
-    // API: execute command
-    if (req.url === '/api/exec' && req.method === 'POST') {
-      let body = '';
-      req.on('data', (chunk: Buffer) => { body += chunk; });
-      req.on('end', async () => {
-        try {
-          const { sessionId, command, timeoutMs } = JSON.parse(body);
-          const result = await sshExec(sessionId, command, timeoutMs);
-          res.setHeader('Content-Type', 'application/json');
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.writeHead(200);
-          res.end(JSON.stringify(result));
-        } catch (err: unknown) {
-          res.writeHead(400);
-          res.end(JSON.stringify({ error: (err as Error).message }));
-        }
-      });
       return;
     }
 
@@ -119,54 +99,6 @@ function startWebServer(config: ClawfatherConfig): http.Server {
   return server;
 }
 
-// ── Tool Registration ───────────────────────────────────────────────────────
-
-function registerTools() {
-  return {
-    ssh_exec: {
-      name: 'ssh_exec',
-      description: 'Execute a shell command on the connected remote server via SSH',
-      parameters: {
-        type: 'object', required: ['sessionId', 'command'],
-        properties: {
-          sessionId: { type: 'string', description: 'The active session ID' },
-          command: { type: 'string', description: 'Shell command to execute' },
-          timeoutMs: { type: 'number', description: 'Timeout in ms (default: 120000)' },
-        },
-      },
-      handler: async (params: { sessionId: string; command: string; timeoutMs?: number }) => {
-        return sshExec(params.sessionId, params.command, params.timeoutMs);
-      },
-    },
-    ssh_upload: {
-      name: 'ssh_upload',
-      description: 'Upload a file to the connected remote server via SCP',
-      parameters: {
-        type: 'object', required: ['sessionId', 'localPath', 'remotePath'],
-        properties: {
-          sessionId: { type: 'string' }, localPath: { type: 'string' }, remotePath: { type: 'string' },
-        },
-      },
-      handler: async (params: { sessionId: string; localPath: string; remotePath: string }) => {
-        return sshUpload(params.sessionId, params.localPath, params.remotePath);
-      },
-    },
-    ssh_download: {
-      name: 'ssh_download',
-      description: 'Download a file from the connected remote server via SCP',
-      parameters: {
-        type: 'object', required: ['sessionId', 'remotePath', 'localPath'],
-        properties: {
-          sessionId: { type: 'string' }, remotePath: { type: 'string' }, localPath: { type: 'string' },
-        },
-      },
-      handler: async (params: { sessionId: string; remotePath: string; localPath: string }) => {
-        return sshDownload(params.sessionId, params.remotePath, params.localPath);
-      },
-    },
-  };
-}
-
 // ── Main ────────────────────────────────────────────────────────────────────
 
 function main() {
@@ -176,8 +108,7 @@ function main() {
   sessionStore.start(config.sessionTimeoutMs);
   const sshServer = startSSHServer(config);
   const webServer = startWebServer(config);
-  const tools = registerTools();
-  console.log(`[clawfather] Registered ${Object.keys(tools).length} agent tools`);
+  console.log('[clawfather] Using native OpenClaw exec tool for SSH commands (no custom tools registered)');
 
   const shutdown = () => {
     console.log('\n[clawfather] Shutting down...');
@@ -195,8 +126,7 @@ function main() {
   console.log('[clawfather]   Web: http://localhost:8080');
 }
 
-export { registerTools, sessionStore };
-export { sshExec, sshUpload, sshDownload } from './ssh-exec';
+export { sessionStore };
 
 if (require.main === module) {
   main();
