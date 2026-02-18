@@ -1,4 +1,6 @@
 import { Session } from './types';
+import { spawn } from 'child_process';
+import { unlink } from 'fs/promises';
 
 /**
  * In-memory session store for active SSH sessions.
@@ -52,8 +54,12 @@ class SessionStore {
     }
   }
 
-  /** Remove a session */
+  /** Remove a session, cleaning up its ControlMaster */
   remove(sessionId: string): boolean {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      this.cleanupControlMaster(session);
+    }
     return this.sessions.delete(sessionId);
   }
 
@@ -62,11 +68,31 @@ class SessionStore {
     return Array.from(this.sessions.values());
   }
 
+  /** Clean up a ControlMaster socket for a session */
+  private cleanupControlMaster(session: Session): void {
+    const { targetUser, targetHost, controlPath, sessionId } = session;
+    console.log(`[clawdfather] Cleaning up ControlMaster for session ${sessionId} (${targetUser}@${targetHost})`);
+
+    // Send exit command to ControlMaster
+    const proc = spawn('ssh', ['-S', controlPath, '-O', 'exit', `${targetUser}@${targetHost}`], {
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    proc.on('error', (err: Error) => {
+      console.log(`[clawdfather] ControlMaster exit command failed for ${sessionId}: ${err.message}`);
+    });
+
+    // Also try to remove the socket file
+    unlink(controlPath).catch(() => {
+      // Socket may already be gone — that's fine
+    });
+  }
+
   /** Remove expired sessions */
   private cleanup(): void {
     const now = Date.now();
     for (const [id, session] of this.sessions) {
       if (now - session.lastActivity > this.timeoutMs) {
+        this.cleanupControlMaster(session);
         this.sessions.delete(id);
         console.log(`[clawdfather] Session ${id} expired (${session.targetUser}@${session.targetHost})`);
       }

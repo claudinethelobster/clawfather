@@ -65,7 +65,7 @@ Add to your OpenClaw config (`openclaw.json`):
       clawdfather: {
         enabled: true,
         config: {
-          sshPort: 22,           // Port for the SSH server
+          sshPort: 2222,         // Port for the SSH server (default 2222)
           webDomain: "clawdfather.ai", // Domain for the web UI URL
           sessionTimeoutMs: 1800000, // 30 min default
           // hostKeyPath: "..."     // Optional custom host key
@@ -167,40 +167,76 @@ Clawdfather does **not** register custom agent tools. Instead, the web UI inject
 | `clawdfather.sessions` | List all active sessions |
 | `clawdfather.session` | Get info about a specific session |
 
-### Security Model — Public Key Authentication
+### Security Model — Two-Tier SSH Authentication
 
-Clawdfather uses **public key authentication only** (like [terminal.shop](https://terminal.shop)). Password auth is rejected. Here's how it works:
+Clawdfather uses a **two-tier authentication model**:
 
-**Two-stage authentication:**
+**Regular users** (`ssh clawdfather.ai` or `ssh user@clawdfather.ai`):
+- **Public key only** — Any valid public key is accepted (like [terminal.shop](https://terminal.shop)). No account creation needed. Your private key never leaves your machine.
 
-1. **You → Clawdfather portal:** Your SSH client proves identity via public key cryptography. Clawdfather accepts any valid public key signature — no account creation needed. Your private key never leaves your machine; only the signature is verified.
-2. **Clawdfather → Target server:** Your SSH agent forwarding (`-A`) allows Clawdfather to authenticate to the target server on your behalf. The agent protocol never exposes your private key — it only asks your local agent to sign challenges.
+**Root user** (`ssh root@clawdfather.ai`):
+- **Public key + password (2FA)** — The key fingerprint must be in the configured allowlist AND a password must be provided as a second factor.
+- Configure via `rootAllowedFingerprints` (array of `SHA256:...` strings) and `rootPassword` in the plugin config.
+- If no allowlist is configured, any valid key is accepted for the first factor.
+- If no root password is configured, the password requirement is waived.
 
-**Why this is secure:**
+**Authentication flow (Clawdfather → Target):**
+- Your SSH agent forwarding (`-A`) allows Clawdfather to authenticate to the target server on your behalf. The agent protocol never exposes your private key — it only asks your local agent to sign challenges.
 
-- **No passwords anywhere** — Cryptographic identity only. Nothing to phish, leak, or brute-force.
-- **Private key stays local** — Your key never leaves your machine. Not during portal auth, not during target auth.
-- **Fingerprint-based identity** — Each user is identified by their key's SHA256 fingerprint. No usernames or emails needed.
+**Security features:**
+
+- **Brute-force protection** — Max 5 failed auth attempts per connection, then disconnect.
+- **Constant-time password comparison** — Prevents timing attacks on the root password.
+- **Fingerprint-based identity** — Each user is identified by their key's SHA256 fingerprint for audit trails.
 - **Session isolation** — Each session has a unique UUID and its own ControlMaster socket.
+- **ControlMaster lifecycle management** — When sessions expire or are removed, the ControlMaster is cleanly terminated (`ssh -O exit`) and the socket file is removed.
 - **Gateway auth** — The web UI still requires your OpenClaw gateway token/password.
+- **Tool safety** — AI follows strict rules about destructive commands (see SKILL.md).
 
-**What this does NOT affect:** Public key auth to Clawdfather controls who can create sessions. What you can do on the target server is entirely determined by the target server's own SSH authorization for your forwarded key. Clawdfather doesn't add or remove any permissions on the target.
+## Production Deployment
 
-**Future possibilities:** Key fingerprints enable allowlists (restrict who can use your Clawdfather instance), per-user billing, and audit trails — all without any account system.
+### 1. DNS
 
-Additional safeguards:
-- **ControlMaster sessions** — Persist for 30 min, auto-cleaned
-- **Tool safety** — AI follows strict rules about destructive commands (see SKILL.md)
+Create an **A record** pointing `clawdfather.ai` (or your domain) to your server's public IP.
+
+### 2. SSH Port
+
+The default SSH port is **2222** to avoid conflicting with the host's own sshd on port 22. Users connect with:
+
+```bash
+ssh -A -p 2222 clawdfather.ai
+```
+
+If you want `ssh clawdfather.ai` to work without `-p`, set `sshPort: 22` in config — but make sure your host sshd is moved to another port first.
+
+### 3. Firewall
+
+Open these ports:
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| 22/tcp | SSH | Host sshd (your own access) |
+| 2222/tcp | SSH | Clawdfather SSH server |
+| 443/tcp | HTTPS | Web UI (via Caddy) |
+| 80/tcp | HTTP | ACME challenges / redirect |
+
+### 4. TLS with Caddy
+
+Caddy handles TLS automatically via Let's Encrypt — see the Caddy example below.
+
+### 5. Gateway Auth
+
+The web UI requires your OpenClaw gateway token/password. Ensure the gateway is configured with authentication before exposing publicly.
 
 ## DNS/Networking Setup
 
 For `clawdfather.ai` to work, you need:
 
 1. **DNS A record** pointing `clawdfather.ai` to your OpenClaw host
-2. **Port forwarding** for SSH port (default 22) and Gateway port (18789)
+2. **Port forwarding** for SSH port (default 2222) and Gateway port (18789)
 3. **TLS** for the web UI (Caddy recommended — auto-provisions Let's Encrypt certs)
 
-> **Note:** SSH traffic (port 22) goes directly to the Clawdfather SSH server, not through Caddy. Only HTTP/HTTPS/WebSocket traffic is reverse-proxied.
+> **Note:** SSH traffic (port 2222) goes directly to the Clawdfather SSH server, not through Caddy. Only HTTP/HTTPS/WebSocket traffic is reverse-proxied.
 
 ### Example with Caddy (recommended)
 

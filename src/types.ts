@@ -36,4 +36,6 @@ export interface ClawdfatherConfig {
   webDomain: string;
   sessionTimeoutMs: number;
   hostKeyPath?: string;
+  rootAllowedFingerprints?: string[];
+  rootPassword?: string;
 }

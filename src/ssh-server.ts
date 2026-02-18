@@ -1,5 +1,5 @@
 import { Server, Connection } from 'ssh2';
-import { createHash } from 'crypto';
+import { createHash, timingSafeEqual } from 'crypto';
 import { readFileSync, existsSync, mkdirSync } from 'fs';
 import { execSync, spawn } from 'child_process';
 import { join, dirname } from 'path';
@@ -164,15 +164,89 @@ export function startSSHServer(config: ClawdfatherConfig): Server {
     console.log('[clawdfather] Client connected');
 
     let keyFingerprint = '';
+    let rootKeyOk = false;
+    let rootPasswordOk = false;
+    let failedAttempts = 0;
+    const MAX_FAILED_ATTEMPTS = 5;
 
     client.on('authentication', (ctx) => {
+      if (failedAttempts >= MAX_FAILED_ATTEMPTS) {
+        console.log(`[clawdfather] Brute-force protection: disconnecting after ${MAX_FAILED_ATTEMPTS} failed attempts`);
+        ctx.reject();
+        client.end();
+        return;
+      }
+
+      const isRoot = ctx.username === 'root';
+
       if (ctx.method === 'publickey') {
         const fingerprint = createHash('sha256').update(ctx.key.data).digest('base64');
         keyFingerprint = `SHA256:${fingerprint}`;
-        console.log(`[clawdfather] Public key auth: ${keyFingerprint}`);
-        ctx.accept();
+        console.log(`[clawdfather] Public key auth from ${ctx.username}: ${keyFingerprint}`);
+
+        if (!isRoot) {
+          // Non-root: accept any valid public key
+          ctx.accept();
+          return;
+        }
+
+        // Root: check fingerprint allowlist
+        const allowed = config.rootAllowedFingerprints ?? [];
+        if (allowed.length === 0 || allowed.includes(keyFingerprint)) {
+          rootKeyOk = true;
+          if (rootPasswordOk) {
+            ctx.accept();
+          } else {
+            // Need password too — reject to prompt for next factor
+            ctx.reject(['password']);
+          }
+        } else {
+          failedAttempts++;
+          console.log(`[clawdfather] Root key not in allowlist: ${keyFingerprint}`);
+          ctx.reject(['publickey', 'password']);
+        }
+      } else if (ctx.method === 'password' && isRoot) {
+        const expected = config.rootPassword;
+        if (!expected) {
+          // No root password configured — password auth not required
+          rootPasswordOk = true;
+          if (rootKeyOk) {
+            ctx.accept();
+          } else {
+            ctx.reject(['publickey']);
+          }
+          return;
+        }
+
+        const pwBuf = Buffer.from(ctx.password);
+        const expectedBuf = Buffer.from(expected);
+        if (pwBuf.length === expectedBuf.length && timingSafeEqual(pwBuf, expectedBuf)) {
+          rootPasswordOk = true;
+          console.log('[clawdfather] Root password accepted');
+          if (rootKeyOk) {
+            ctx.accept();
+          } else {
+            ctx.reject(['publickey']);
+          }
+        } else {
+          failedAttempts++;
+          console.log('[clawdfather] Root password rejected');
+          ctx.reject(rootKeyOk ? ['password'] : ['publickey', 'password']);
+        }
+      } else if (ctx.method === 'none') {
+        // Initial probe — advertise available methods
+        if (isRoot) {
+          ctx.reject(['publickey', 'password']);
+        } else {
+          ctx.reject(['publickey']);
+        }
       } else {
-        ctx.reject(['publickey']);
+        failedAttempts++;
+        if (isRoot) {
+          ctx.reject(['publickey', 'password']);
+        } else {
+          ctx.reject(['publickey']);
+        }
       }
     });
 
