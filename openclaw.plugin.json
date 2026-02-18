@@ -7,14 +7,14 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "sshPort": { "type": "number", "default": 2222 },
+      "sshPort": { "type": "number", "default": 22 },
       "webDomain": { "type": "string", "default": "localhost" },
       "sessionTimeoutMs": { "type": "number", "default": 1800000 },
       "hostKeyPath": { "type": "string" }
     }
   },
   "uiHints": {
-    "sshPort": { "label": "SSH Server Port", "placeholder": "2222" },
+    "sshPort": { "label": "SSH Server Port", "placeholder": "22" },
     "webDomain": { "label": "Web Domain", "placeholder": "clawfather.ai" },
     "hostKeyPath": { "label": "Host Key Path", "sensitive": false }
   }

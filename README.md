@@ -65,7 +65,7 @@ Add to your OpenClaw config (`openclaw.json`):
       clawfather: {
         enabled: true,
         config: {
-          sshPort: 2222,           // Port for the SSH server
+          sshPort: 22,           // Port for the SSH server
           webDomain: "clawfather.ai", // Domain for the web UI URL
           webProto: "https",       // http or https
           sessionTimeoutMs: 1800000, // 30 min default
@@ -91,7 +91,7 @@ openclaw gateway restart
 ### 1. Connect via SSH
 
 ```bash
-ssh -A -p 2222 clawfather.ai
+ssh -A clawfather.ai
 ```
 
 > **Note:** `-A` enables agent forwarding. Your local SSH keys are used to authenticate to the target server — nothing is stored by Clawfather.
@@ -182,7 +182,7 @@ Clawfather does **not** register custom agent tools. Instead, the web UI injects
 For `clawfather.ai` to work, you need:
 
 1. **DNS A record** pointing `clawfather.ai` to your OpenClaw host
-2. **Port forwarding** for SSH port (default 2222) and Gateway port (18789)
+2. **Port forwarding** for SSH port (default 22) and Gateway port (18789)
 3. **TLS** for the web UI (use Tailscale Serve, nginx, or Caddy as reverse proxy)
 
 ### Example with Tailscale
@@ -192,7 +192,7 @@ For `clawfather.ai` to work, you need:
 openclaw gateway --tailscale serve
 
 # SSH is available on your Tailscale IP
-ssh -A -p 2222 your-machine.tail1234.ts.net
+ssh -A your-machine.tail1234.ts.net
 ```
 
 ### Example with nginx
