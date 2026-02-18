@@ -167,30 +167,25 @@ Clawdfather does **not** register custom agent tools. Instead, the web UI inject
 | `clawdfather.sessions` | List all active sessions |
 | `clawdfather.session` | Get info about a specific session |
 
-### Security Model — Two-Tier SSH Authentication
+### Security Model
 
-Clawdfather uses a **two-tier authentication model**:
+Clawdfather is a **portal app**, not a server login. It uses SSH public key authentication to identify users — the same approach as [terminal.shop](https://terminal.shop).
 
-**Regular users** (`ssh clawdfather.ai` or `ssh user@clawdfather.ai`):
-- **Public key only** — Any valid public key is accepted (like [terminal.shop](https://terminal.shop)). No account creation needed. Your private key never leaves your machine.
+**How it works:**
+1. You run `ssh -A clawdfather.ai` — your SSH client offers your public key
+2. Clawdfather accepts any valid public key (no account creation needed)
+3. Your key's SHA256 fingerprint becomes your identity (for audit trails, future billing, allowlists)
+4. You pick a target server — Clawdfather uses your forwarded SSH agent (`-A`) to authenticate there
+5. The agent protocol never exposes your private key — it only asks your local agent to sign challenges
 
-**Root user** (`ssh root@clawdfather.ai`):
-- **Public key + password (2FA)** — The key fingerprint must be in the configured allowlist AND a password must be provided as a second factor.
-- Configure via `rootAllowedFingerprints` (array of `SHA256:...` strings) and `rootPassword` in the plugin config.
-- If no allowlist is configured, any valid key is accepted for the first factor.
-- If no root password is configured, the password requirement is waived.
-
-**Authentication flow (Clawdfather → Target):**
-- Your SSH agent forwarding (`-A`) allows Clawdfather to authenticate to the target server on your behalf. The agent protocol never exposes your private key — it only asks your local agent to sign challenges.
+**This is NOT the same as logging into the host.** Clawdfather runs on port 22 as an app. Host admin SSH (standard sshd) runs on port 2222 with its own authentication. These are completely separate.
 
 **Security features:**
 
-- **Brute-force protection** — Max 5 failed auth attempts per connection, then disconnect.
-- **Constant-time password comparison** — Prevents timing attacks on the root password.
-- **Fingerprint-based identity** — Each user is identified by their key's SHA256 fingerprint for audit trails.
+- **Public key only** — Password and other auth methods are rejected. No credentials to phish or leak.
+- **Fingerprint-based identity** — Each user is identified by their key's SHA256 fingerprint for audit trails and future allowlists/billing.
 - **Session isolation** — Each session has a unique UUID and its own ControlMaster socket.
 - **ControlMaster lifecycle management** — When sessions expire or are removed, the ControlMaster is cleanly terminated (`ssh -O exit`) and the socket file is removed.
-- **Gateway auth** — The web UI still requires your OpenClaw gateway token/password.
 - **Tool safety** — AI follows strict rules about destructive commands (see SKILL.md).
 
 ## Production Deployment
