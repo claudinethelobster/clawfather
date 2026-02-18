@@ -65,7 +65,7 @@ Add to your OpenClaw config (`openclaw.json`):
       clawdfather: {
         enabled: true,
         config: {
-          sshPort: 2222,         // Port for the SSH server (default 2222)
+          sshPort: 22,           // Port for the SSH server (default 22)
           webDomain: "clawdfather.ai", // Domain for the web UI URL
           sessionTimeoutMs: 1800000, // 30 min default
           // hostKeyPath: "..."     // Optional custom host key
@@ -199,15 +199,73 @@ Clawdfather uses a **two-tier authentication model**:
 
 Create an **A record** pointing `clawdfather.ai` (or your domain) to your server's public IP.
 
-### 2. SSH Port
+### 2. SSH Port — Clawdfather Owns Port 22
 
-The default SSH port is **2222** to avoid conflicting with the host's own sshd on port 22. Users connect with:
+Clawdfather defaults to **port 22** so users can simply run:
 
 ```bash
-ssh -A -p 2222 clawdfather.ai
+ssh -A clawdfather.ai
 ```
 
-If you want `ssh clawdfather.ai` to work without `-p`, set `sshPort: 22` in config — but make sure your host sshd is moved to another port first.
+No `-p` flag needed. This is the user-friendly approach — but it means **you must move the host's sshd to a different port** (we recommend 2222) for admin access.
+
+#### Moving sshd to Port 2222
+
+> ⚠️ **WARNING:** Follow these steps carefully. If you change sshd's port and can't connect on the new port, you will be locked out of your server. **Always test the new port before closing your current session.**
+
+**Step 1.** Edit `/etc/ssh/sshd_config`:
+
+```
+Port 2222
+```
+
+**Step 2.** If using SELinux, allow the new port:
+
+```bash
+semanage port -a -t ssh_port_t -p tcp 2222
+```
+
+**Step 3.** Update firewall to allow the new port:
+
+```bash
+# UFW
+ufw allow 2222/tcp
+ufw reload
+
+# Or firewalld
+firewall-cmd --permanent --add-port=2222/tcp
+firewall-cmd --reload
+```
+
+**Step 4.** Restart sshd:
+
+```bash
+systemctl restart sshd
+```
+
+**Step 5. 🚨 CRITICAL: Test the new sshd port BEFORE closing your current session:**
+
+```bash
+ssh -p 2222 user@clawdfather.ai
+```
+
+Open a **new terminal** and verify you can connect. Do NOT close your existing session until this works.
+
+**Step 6.** Once confirmed working, Clawdfather can bind port 22. Restart the OpenClaw gateway:
+
+```bash
+openclaw gateway restart
+```
+
+**Step 7.** Update firewall for the full setup:
+
+```bash
+ufw allow 22/tcp    # Clawdfather SSH (public-facing)
+ufw allow 2222/tcp  # Host admin SSH
+ufw allow 443/tcp   # Web UI (HTTPS)
+ufw allow 80/tcp    # ACME challenges / redirect
+ufw reload
+```
 
 ### 3. Firewall
 
@@ -215,8 +273,8 @@ Open these ports:
 
 | Port | Protocol | Purpose |
 |------|----------|---------|
-| 22/tcp | SSH | Host sshd (your own access) |
-| 2222/tcp | SSH | Clawdfather SSH server |
+| 22/tcp | SSH | Clawdfather SSH server (public-facing) |
+| 2222/tcp | SSH | Host sshd (your admin access) |
 | 443/tcp | HTTPS | Web UI (via Caddy) |
 | 80/tcp | HTTP | ACME challenges / redirect |
 
@@ -233,10 +291,10 @@ The web UI requires your OpenClaw gateway token/password. Ensure the gateway is 
 For `clawdfather.ai` to work, you need:
 
 1. **DNS A record** pointing `clawdfather.ai` to your OpenClaw host
-2. **Port forwarding** for SSH port (default 2222) and Gateway port (18789)
+2. **Port forwarding** for SSH port (default 22) and Gateway port (18789)
 3. **TLS** for the web UI (Caddy recommended — auto-provisions Let's Encrypt certs)
 
-> **Note:** SSH traffic (port 2222) goes directly to the Clawdfather SSH server, not through Caddy. Only HTTP/HTTPS/WebSocket traffic is reverse-proxied.
+> **Note:** SSH traffic (port 22) goes directly to the Clawdfather SSH server, not through Caddy. Only HTTP/HTTPS/WebSocket traffic is reverse-proxied.
 
 ### Example with Caddy (recommended)
 
