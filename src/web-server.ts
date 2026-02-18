@@ -29,20 +29,65 @@ export function sendToSession(sessionId: string, data: Record<string, unknown>):
   }
 }
 
+// Singleton state for the web server so multiple accounts don't cause EADDRINUSE
+let singletonServer: HttpServer | null = null;
+let singletonRefCount = 0;
+
+/** Compute the CORS origin value for a response. */
+function resolveAllowedOrigin(reqOrigin: string | undefined, config: ClawdfatherConfig): string | null {
+  const allowed = config.allowedOrigins;
+  if (!allowed || allowed.length === 0) {
+    // Default: same-origin only — reflect the request origin if it matches
+    // the configured webDomain, otherwise reject.
+    if (!reqOrigin) return null;
+    try {
+      const url = new URL(reqOrigin);
+      if (url.hostname === config.webDomain || url.hostname === "localhost") {
+        return reqOrigin;
+      }
+    } catch { /* malformed origin */ }
+    return null;
+  }
+  if (allowed.includes("*")) return "*";
+  if (reqOrigin && allowed.includes(reqOrigin)) return reqOrigin;
+  return null;
+}
+
 /**
- * Start the Clawdfather web server (HTTP + WebSocket).
+ * Get or create the singleton Clawdfather web server (HTTP + WebSocket).
+ * Returns an object with a release() method for reference-counted shutdown.
  */
 export function startWebServer(
   config: ClawdfatherConfig,
   pluginRoot: string,
   onInbound: (sessionId: string, text: string, keyFingerprint: string) => Promise<void>
-): HttpServer {
+): { server: HttpServer; release: () => void } {
+  if (singletonServer) {
+    singletonRefCount++;
+    return {
+      server: singletonServer,
+      release: () => {
+        singletonRefCount--;
+        if (singletonRefCount <= 0 && singletonServer) {
+          singletonServer.close();
+          singletonServer = null;
+          singletonRefCount = 0;
+        }
+      },
+    };
+  }
+
   const port = config.webPort ?? 3000;
   const uiDir = join(pluginRoot, "ui");
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    // CORS headers
-    res.setHeader("Access-Control-Allow-Origin", "*");
+    // CORS headers — configurable allowlist, same-origin by default
+    const reqOrigin = req.headers.origin;
+    const allowedOrigin = resolveAllowedOrigin(reqOrigin, config);
+    if (allowedOrigin) {
+      res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+      res.setHeader("Vary", "Origin");
+    }
     res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
@@ -67,7 +112,6 @@ export function startWebServer(
           targetHost: session.targetHost,
           targetUser: session.targetUser,
           targetPort: session.targetPort,
-          controlPath: session.controlPath,
           connectedAt: session.connectedAt,
           keyFingerprint: session.keyFingerprint,
         }));
@@ -148,14 +192,13 @@ export function startWebServer(
         }
         wsClients.get(sessionId)!.add(ws);
 
-        // Send session info back
+        // Send session info back (controlPath kept server-side only)
         ws.send(JSON.stringify({
           type: "session",
           sessionId: session.sessionId,
           targetUser: session.targetUser,
           targetHost: session.targetHost,
           targetPort: session.targetPort,
-          controlPath: session.controlPath,
           keyFingerprint: session.keyFingerprint,
         }));
 
@@ -167,6 +210,15 @@ export function startWebServer(
           ws.send(JSON.stringify({ type: "error", message: "Not authenticated. Send auth first." }));
           return;
         }
+
+        // Re-validate session liveness on every message
+        const liveSession = sessionStore.get(authenticatedSessionId);
+        if (!liveSession) {
+          ws.send(JSON.stringify({ type: "error", message: "Session expired or invalidated" }));
+          ws.close(4001, "Session expired");
+          return;
+        }
+        sessionStore.touch(authenticatedSessionId);
 
         const text = (msg.text as string)?.trim();
         if (!text) return;
@@ -204,5 +256,18 @@ export function startWebServer(
     console.log(`[clawdfather] Web server listening on port ${port}`);
   });
 
-  return server;
+  singletonServer = server;
+  singletonRefCount = 1;
+
+  return {
+    server,
+    release: () => {
+      singletonRefCount--;
+      if (singletonRefCount <= 0 && singletonServer) {
+        singletonServer.close();
+        singletonServer = null;
+        singletonRefCount = 0;
+      }
+    },
+  };
 }

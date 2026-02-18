@@ -76,7 +76,7 @@ export function createClawdfatherChannel(pluginConfig: ClawdfatherConfig, plugin
 
         ctx.log?.info(`[clawdfather] Starting web server for account ${accountId}`);
 
-        const webServer = startWebServer(
+        const { release } = startWebServer(
           pluginConfig,
           pluginRoot,
           async (sessionId: string, text: string, keyFingerprint: string) => {
@@ -93,8 +93,8 @@ export function createClawdfatherChannel(pluginConfig: ClawdfatherConfig, plugin
 
         return {
           stop: () => {
-            webServer.close();
-            ctx.log?.info("[clawdfather] Web server stopped");
+            release();
+            ctx.log?.info("[clawdfather] Web server released for account");
           },
         };
       },

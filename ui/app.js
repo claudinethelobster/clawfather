@@ -28,13 +28,24 @@
   let reconnectTimer = null;
   let reconnectDelay = 1000;
   let authenticated = false;
+  let bootstrapSent = false;
 
   // ── Init ──────────────────────────────────────────────────────────
   function init() {
-    // Extract session from URL hash
+    // Extract session from URL hash then immediately scrub it
     const hash = window.location.hash.slice(1);
     const params = new URLSearchParams(hash);
     sessionId = params.get("session");
+
+    if (sessionId) {
+      // Remove the token from URL and browser history so it isn't leaked
+      // via Referer headers, browser history, or shoulder-surfing.
+      if (window.history && window.history.replaceState) {
+        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      } else {
+        window.location.hash = "";
+      }
+    }
 
     if (!sessionId) {
       showWelcome();
@@ -128,27 +139,20 @@
         $targetDisplay.textContent = serverTarget;
         addSystemMessage("Connected to " + serverTarget);
 
-        // Send initial context for the agent
-        var sshPrefix = "ssh -o ControlPath=" + msg.controlPath +
-          " -o ControlMaster=no -o BatchMode=yes" +
-          (msg.targetPort !== 22 ? " -p " + msg.targetPort : "") +
-          " " + msg.targetUser + "@" + msg.targetHost;
-
-        var scpPrefix = "scp -o ControlPath=" + msg.controlPath +
-          " -o ControlMaster=no -o BatchMode=yes" +
-          (msg.targetPort !== 22 ? " -P " + msg.targetPort : "");
-
-        sendMessage(
-          "[System: Clawdfather session active. Connected to " + serverTarget + ".\n\n" +
-          "To run commands on the connected server, use the exec tool with:\n" +
-          sshPrefix + " <command>\n\n" +
-          "For interactive commands, use exec with pty:true.\n" +
-          "For long-running commands, use exec with background:true and poll with the process tool.\n\n" +
-          "For file transfers:\n" +
-          scpPrefix + " <local> " + msg.targetUser + "@" + msg.targetHost + ":<remote>\n" +
-          scpPrefix + " " + msg.targetUser + "@" + msg.targetHost + ":<remote> <local>\n\n" +
-          "Start by running basic recon: hostname, uname -a, uptime.]"
-        );
+        // Only send the bootstrap system prompt once per session to
+        // avoid re-injecting context on every reconnect.
+        if (!bootstrapSent) {
+          bootstrapSent = true;
+          sendMessage(
+            "[System: Clawdfather session active. Connected to " + serverTarget +
+            " (port " + (msg.targetPort || 22) + ").\n\n" +
+            "To run commands on the connected server, use the exec tool with the " +
+            "session's SSH ControlMaster (managed server-side).\n\n" +
+            "For interactive commands, use exec with pty:true.\n" +
+            "For long-running commands, use exec with background:true and poll with the process tool.\n\n" +
+            "Start by running basic recon: hostname, uname -a, uptime.]"
+          );
+        }
         break;
 
       case "message":
@@ -313,6 +317,15 @@
     var newSession = params.get("session");
     if (newSession && newSession !== sessionId) {
       sessionId = newSession;
+      bootstrapSent = false;
+
+      // Scrub token from URL immediately
+      if (window.history && window.history.replaceState) {
+        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      } else {
+        window.location.hash = "";
+      }
+
       $messages.innerHTML = "";
       authenticated = false;
       if (ws) ws.close();

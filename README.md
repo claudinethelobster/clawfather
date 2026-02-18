@@ -117,6 +117,7 @@ Add to your OpenClaw config (`openclaw.json`):
           webDomain: "clawdfather.ai", // Domain for the web UI URL
           sessionTimeoutMs: 1800000, // 30 min default
           // hostKeyPath: "..."     // Optional custom host key
+          // allowedOrigins: ["https://clawdfather.ai"]  // CORS allowlist (same-origin default)
         }
       }
     }
@@ -238,6 +239,23 @@ Clawdfather is a **portal app**, not a server login. It uses SSH public key auth
 - **Session isolation** — Each session has a unique UUID and its own ControlMaster socket.
 - **ControlMaster lifecycle management** — When sessions expire or are removed, the ControlMaster is cleanly terminated (`ssh -O exit`) and the socket file is removed.
 - **Tool safety** — AI follows strict rules about destructive commands (see SKILL.md).
+
+> **⚠️ Session Token Security**
+>
+> The session token (UUID) in the URL hash is a **high-security bearer secret**. Anyone who possesses it has full access to the connected SSH session for the lifetime of the session. Treat it like a password:
+>
+> - The web UI scrubs the token from the URL and browser history immediately after extracting it on first load.
+> - The token is never written to client-side logs.
+> - Do not share session URLs over insecure channels.
+> - Sessions are bound to the SSH connection lifecycle with a short (60s) grace period after the SSH client disconnects.
+
+**Session liveness:** Every inbound WebSocket message re-validates the session against the server-side store. If the session has expired or been invalidated, the server sends an error and closes the connection immediately.
+
+**Web server singleton:** The HTTP/WebSocket server is a singleton per plugin instance. When multiple accounts are configured, they share a single server to avoid port conflicts (EADDRINUSE). The server shuts down only when the last account releases its reference.
+
+**CORS:** By default, only same-origin requests are allowed (the configured `webDomain` and `localhost`). You can configure an explicit allowlist via `allowedOrigins` in the plugin config. Set `["*"]` to restore permissive CORS (not recommended for production).
+
+**Sensitive metadata:** The SSH ControlMaster socket path (`controlPath`) is never exposed to the browser. The server injects SSH context into agent messages server-side.
 
 ## Production Deployment
 

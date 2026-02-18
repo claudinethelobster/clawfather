@@ -1,7 +1,34 @@
 import { getClawdfatherRuntime } from "./runtime";
 import { sendToSession } from "./web-server";
+import { sessionStore } from "./sessions";
 
 const CHANNEL_ID = "clawdfather" as const;
+
+/**
+ * Enrich a bootstrap system message with server-side SSH context
+ * (controlPath is never sent to the browser).
+ */
+function enrichWithSSHContext(text: string, sessionId: string): string {
+  if (!text.startsWith("[System: Clawdfather session active")) return text;
+
+  const session = sessionStore.get(sessionId);
+  if (!session) return text;
+
+  const { controlPath, targetUser, targetHost, targetPort } = session;
+  const portFlag = targetPort !== 22 ? ` -p ${targetPort}` : "";
+  const scpPortFlag = targetPort !== 22 ? ` -P ${targetPort}` : "";
+  const sshPrefix = `ssh -o ControlPath=${controlPath} -o ControlMaster=no -o BatchMode=yes${portFlag} ${targetUser}@${targetHost}`;
+  const scpPrefix = `scp -o ControlPath=${controlPath} -o ControlMaster=no -o BatchMode=yes${scpPortFlag}`;
+
+  return text.replace(
+    /Start by running basic recon: hostname, uname -a, uptime\.\]/,
+    `To run commands, use the exec tool with:\n${sshPrefix} <command>\n\n` +
+    `For file transfers:\n` +
+    `${scpPrefix} <local> ${targetUser}@${targetHost}:<remote>\n` +
+    `${scpPrefix} ${targetUser}@${targetHost}:<remote> <local>\n\n` +
+    `Start by running basic recon: hostname, uname -a, uptime.]`
+  );
+}
 
 /**
  * Handle an inbound chat message from the Clawdfather web UI.
@@ -15,7 +42,8 @@ export async function handleClawdfatherInbound(params: {
   config: any;
 }): Promise<void> {
   const core = getClawdfatherRuntime();
-  const { sessionId, text, keyFingerprint, accountId, config } = params;
+  const { sessionId, keyFingerprint, accountId, config } = params;
+  const text = enrichWithSSHContext(params.text, sessionId);
 
   const peerId = sessionId;
 

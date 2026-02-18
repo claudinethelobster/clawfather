@@ -37,4 +37,6 @@ export interface ClawdfatherConfig {
   webDomain: string;
   sessionTimeoutMs: number;
   hostKeyPath?: string;
+  /** Allowed CORS origins. Empty/undefined = same-origin only. ["*"] = permissive. */
+  allowedOrigins?: string[];
 }

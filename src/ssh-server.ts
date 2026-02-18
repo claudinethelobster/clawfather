@@ -144,11 +144,24 @@ async function handleInput(
   stream.write(`\x1b[90m  Session: ${sessionId}\x1b[0m\r\n`);
   stream.write(`\x1b[90m  Target:  ${dest.user}@${dest.host}:${dest.port}\x1b[0m\r\n`);
   stream.write('\x1b[90m  Timeout: 30 minutes of inactivity\x1b[0m\r\n\r\n');
-  stream.write('\x1b[33m  You can close this terminal. The session persists.\x1b[0m\r\n');
+  stream.write('\x1b[33m  You can close this terminal. Session has a 60s grace period.\x1b[0m\r\n');
   stream.write('\x1b[90m  Press Ctrl+C or wait to disconnect.\x1b[0m\r\n');
 
+  const gracePeriodMs = 60_000;
+
+  // When the SSH client disconnects, schedule session removal after a
+  // short grace period so the user has time to open the web UI.
+  client.once('close', () => {
+    setTimeout(() => {
+      if (sessionStore.get(sessionId)) {
+        sessionStore.remove(sessionId);
+        console.log(`[clawdfather] Session ${sessionId} invalidated (SSH disconnected after grace period)`);
+      }
+    }, gracePeriodMs);
+  });
+
   setTimeout(() => {
-    stream.write('\r\n\x1b[90m  Closing SSH session. Your web console remains active.\x1b[0m\r\n');
+    stream.write('\r\n\x1b[90m  Closing SSH session. Web console remains active for 60s grace period.\x1b[0m\r\n');
     stream.write('\x1b[33m  Goodbye! 🐾\x1b[0m\r\n');
     try { stream.close(); } catch (_e: unknown) { /* ignore */ }
     client.end();
