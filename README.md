@@ -14,11 +14,13 @@ Clawdfather lets you connect to any server via SSH and get an AI assistant that 
                                   │                                       ▲
                                   │ session URL                           │
                                   ▼                                       │
-                          ┌───────────────┐    native exec (ssh/scp)      │
-                          │  Web Chat UI  │──▶ OpenClaw Gateway ──────────┘
-                          │  (browser)    │    (AI + exec tool)
+                          ┌───────────────┐    channel system             │
+                          │  Web Chat UI  │──▶ Plugin WS :3000 ──────────┘
+                          │  (browser)    │    (inbound → OpenClaw agent)
                           └───────────────┘
 ```
+
+> **Note:** The web UI connects directly to the plugin's own HTTP/WebSocket server on port 3000 (configurable). The OpenClaw Gateway is fully internal and never exposed to the public internet.
 
 1. **SSH in** — `ssh -A clawdfather.ai` (with agent forwarding)
 2. **Pick your target** — Enter `user@host` at the prompt
@@ -181,7 +183,7 @@ The AI will automatically run initial recon on your server and be ready to help 
 
 ## Web UI
 
-The web UI is served by the OpenClaw Gateway at `/clawdfather/`. It features:
+The web UI is served by the plugin's own HTTP server on port 3000 (configurable via `webPort`). It features:
 
 - Dark terminal-aesthetic theme
 - Real-time streaming responses
@@ -196,7 +198,10 @@ The web UI is served by the OpenClaw Gateway at `/clawdfather/`. It features:
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| Plugin entry | `src/index.ts` | SSH server, HTTP server, session management |
+| Plugin entry | `src/index.ts` | Registers channel + SSH service with OpenClaw |
+| Channel | `src/channel.ts` | OpenClaw channel plugin definition |
+| Inbound | `src/inbound.ts` | Routes web UI messages through OpenClaw agent |
+| Web server | `src/web-server.ts` | HTTP + WebSocket server on port 3000 |
 | SSH server | `src/ssh-server.ts` | Custom SSH2 server with agent forwarding |
 | Session store | `src/sessions.ts` | In-memory session management |
 | Web UI | `ui/` | Static HTML/CSS/JS chat interface |
@@ -262,24 +267,29 @@ Open these ports:
 |------|----------|---------|
 | 22/tcp | SSH | Clawdfather SSH server (public-facing) |
 | 2222/tcp | SSH | Host sshd (your admin access) |
+| 3000/tcp | HTTP/WS | Plugin web server (only if not behind Caddy) |
 | 443/tcp | HTTPS | Web UI (via Caddy) |
 | 80/tcp | HTTP | ACME challenges / redirect |
+
+> If using Caddy as a reverse proxy, port 3000 does **not** need to be opened publicly — Caddy connects to it locally.
 
 ### 4. TLS with Caddy
 
 Caddy handles TLS automatically via Let's Encrypt — see the Caddy example below.
 
-### 5. Gateway Auth
+### 5. Gateway
 
-The web UI requires your OpenClaw gateway token/password. Ensure the gateway is configured with authentication before exposing publicly.
+The OpenClaw Gateway is **fully internal** — it is not exposed to the public internet. The web UI connects to the plugin's own HTTP/WebSocket server on port 3000, which routes messages through the OpenClaw channel system internally.
 
 ## DNS/Networking Setup
 
 For `clawdfather.ai` to work, you need:
 
 1. **DNS A record** pointing `clawdfather.ai` to your OpenClaw host
-2. **Port forwarding** for SSH port (default 22) and Gateway port (18789)
+2. **Port forwarding** for SSH port (default 22) and web port (default 3000)
 3. **TLS** for the web UI (Caddy recommended — auto-provisions Let's Encrypt certs)
+
+> The OpenClaw Gateway is internal only — it should **not** be exposed to the public internet. Caddy proxies to the plugin's web server on port 3000, not the Gateway.
 
 > **Note:** SSH traffic (port 22) goes directly to the Clawdfather SSH server, not through Caddy. Only HTTP/HTTPS/WebSocket traffic is reverse-proxied.
 
@@ -289,12 +299,9 @@ Caddy handles TLS automatically via Let's Encrypt — no cert configuration need
 
 ```caddyfile
 clawdfather.ai {
-    # Visiting the root redirects to the web UI
-    redir / /clawdfather/ permanent
-
-    # Proxy everything to the OpenClaw Gateway
+    # Proxy to the plugin's own web/WebSocket server
     # Caddy automatically handles WebSocket upgrade headers
-    reverse_proxy * localhost:18789
+    reverse_proxy * localhost:3000
 }
 ```
 
@@ -311,9 +318,8 @@ sudo caddy start --config /etc/caddy/Caddyfile
 
 That's it. Caddy will:
 - Obtain and renew TLS certificates automatically
-- Proxy HTTP requests to the OpenClaw Gateway (port 18789)
-- Handle WebSocket connections transparently (needed for Gateway WS)
-- Redirect `https://clawdfather.ai/` → `https://clawdfather.ai/clawdfather/`
+- Proxy HTTP and WebSocket traffic to the plugin's web server (port 3000)
+- The OpenClaw Gateway stays internal — never exposed publicly
 
 ### Example with Tailscale
 

@@ -33,6 +33,7 @@ export interface ExecResult {
 /** Plugin configuration from openclaw.plugin.json */
 export interface ClawdfatherConfig {
   sshPort: number;
+  webPort: number;
   webDomain: string;
   sessionTimeoutMs: number;
   hostKeyPath?: string;

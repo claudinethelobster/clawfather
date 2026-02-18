@@ -1,8 +1,8 @@
 /**
  * Clawdfather Web UI — Client-side application
  *
- * Connects to OpenClaw Gateway WebSocket and provides a chat interface
- * for AI-powered server administration.
+ * Connects to the Clawdfather plugin WebSocket server (not the OpenClaw Gateway).
+ * Uses a simple JSON protocol for auth, chat messages, and status updates.
  */
 
 (function () {
@@ -24,11 +24,10 @@
   let ws = null;
   let sessionId = null;
   let serverTarget = null;
-  let messageHistory = [];
   let isThinking = false;
   let reconnectTimer = null;
   let reconnectDelay = 1000;
-  let sessionInfoRpcId = null;
+  let authenticated = false;
 
   // ── Init ──────────────────────────────────────────────────────────
   function init() {
@@ -44,7 +43,7 @@
 
     showChat();
     $sessionDisplay.textContent = sessionId.slice(0, 8) + "...";
-    addSystemMessage("Connecting to OpenClaw Gateway...");
+    addSystemMessage("Connecting...");
     connect();
   }
 
@@ -73,34 +72,24 @@
     if (ws && ws.readyState <= 1) return;
 
     setStatus("connecting");
+    authenticated = false;
 
-    // Determine WS URL — same host as page, or from query param
-    const urlParams = new URLSearchParams(window.location.search);
-    let gatewayUrl = urlParams.get("gatewayUrl");
-
-    if (!gatewayUrl) {
-      const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const host = window.location.host || "localhost:18789";
-      gatewayUrl = `${proto}//${host}`;
-    }
-
-    const wsUrl = gatewayUrl;
+    // Connect to plugin's WS server (same host, /ws path or root)
+    var proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    var host = window.location.host || "localhost:3000";
+    var wsUrl = proto + "//" + host;
 
     ws = new WebSocket(wsUrl);
 
     ws.onopen = function () {
-      setStatus("connected");
-      reconnectDelay = 1000;
-      addSystemMessage("Connected to gateway. Fetching session info...");
-
-      // Fetch session info via Gateway RPC
-      sessionInfoRpcId = Date.now();
-      sendRpc("clawdfather.session", { sessionId: sessionId });
+      setStatus("connecting");
+      // Authenticate with session ID
+      ws.send(JSON.stringify({ type: "auth", sessionId: sessionId }));
     };
 
     ws.onmessage = function (event) {
       try {
-        const msg = JSON.parse(event.data);
+        var msg = JSON.parse(event.data);
         handleMessage(msg);
       } catch (e) {
         console.error("Failed to parse message:", e);
@@ -109,6 +98,7 @@
 
     ws.onclose = function () {
       setStatus("disconnected");
+      authenticated = false;
       scheduleReconnect();
     };
 
@@ -119,161 +109,112 @@
 
   function scheduleReconnect() {
     if (reconnectTimer) return;
-    reconnectTimer = setTimeout(() => {
+    reconnectTimer = setTimeout(function () {
       reconnectTimer = null;
       reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
       connect();
     }, reconnectDelay);
   }
 
-  function sendRpc(method, params) {
-    if (!ws || ws.readyState !== 1) return;
-    ws.send(JSON.stringify({ method, params, id: Date.now() }));
-  }
-
-  function sendChat(text) {
-    sendRpc("chat.send", {
-      message: text,
-      sessionKey: "clawdfather:" + sessionId,
-    });
-  }
-
   // ── Message Handling ──────────────────────────────────────────────
   function handleMessage(msg) {
-    // RPC response
-    if (msg.id && msg.result) {
-      // Session info response from clawdfather.session
-      if (msg.result.targetUser && msg.result.controlPath) {
-        var info = msg.result;
-        serverTarget = info.targetUser + "@" + info.targetHost;
+    switch (msg.type) {
+      case "session":
+        // Authenticated + session info received
+        authenticated = true;
+        setStatus("connected");
+        reconnectDelay = 1000;
+        serverTarget = msg.targetUser + "@" + msg.targetHost;
         $targetDisplay.textContent = serverTarget;
-
-        var sshPrefix = "ssh -o ControlPath=" + info.controlPath +
-          " -o ControlMaster=no -o BatchMode=yes" +
-          (info.targetPort !== 22 ? " -p " + info.targetPort : "") +
-          " " + info.targetUser + "@" + info.targetHost;
-
-        var scpPrefix = "scp -o ControlPath=" + info.controlPath +
-          " -o ControlMaster=no -o BatchMode=yes" +
-          (info.targetPort !== 22 ? " -P " + info.targetPort : "");
-
         addSystemMessage("Connected to " + serverTarget);
 
-        // Load chat history
-        sendRpc("chat.history", { sessionKey: "clawdfather:" + sessionId });
+        // Send initial context for the agent
+        var sshPrefix = "ssh -o ControlPath=" + msg.controlPath +
+          " -o ControlMaster=no -o BatchMode=yes" +
+          (msg.targetPort !== 22 ? " -p " + msg.targetPort : "") +
+          " " + msg.targetUser + "@" + msg.targetHost;
 
-        // Send initial context with SSH prefix for the agent
-        sendChat(
+        var scpPrefix = "scp -o ControlPath=" + msg.controlPath +
+          " -o ControlMaster=no -o BatchMode=yes" +
+          (msg.targetPort !== 22 ? " -P " + msg.targetPort : "");
+
+        sendMessage(
           "[System: Clawdfather session active. Connected to " + serverTarget + ".\n\n" +
           "To run commands on the connected server, use the exec tool with:\n" +
           sshPrefix + " <command>\n\n" +
           "For interactive commands, use exec with pty:true.\n" +
           "For long-running commands, use exec with background:true and poll with the process tool.\n\n" +
           "For file transfers:\n" +
-          scpPrefix + " <local> " + info.targetUser + "@" + info.targetHost + ":<remote>\n" +
-          scpPrefix + " " + info.targetUser + "@" + info.targetHost + ":<remote> <local>\n\n" +
+          scpPrefix + " <local> " + msg.targetUser + "@" + msg.targetHost + ":<remote>\n" +
+          scpPrefix + " " + msg.targetUser + "@" + msg.targetHost + ":<remote> <local>\n\n" +
           "Start by running basic recon: hostname, uname -a, uptime.]"
         );
-        return;
-      }
+        break;
 
-      // RPC error
-      if (msg.result === false && msg.error) {
-        addSystemMessage("Error: " + (msg.error.message || msg.error));
-        return;
-      }
-
-      if (msg.result.messages) {
-        // Chat history
-        msg.result.messages.forEach((m) => {
-          if (m.role === "assistant") addAssistantMessage(extractText(m.content));
-          else if (m.role === "user") addUserMessage(extractText(m.content));
-        });
-        scrollToBottom();
-      }
-      return;
-    }
-
-    // RPC error response
-    if (msg.id && msg.error) {
-      addSystemMessage("Error: " + (msg.error.message || JSON.stringify(msg.error)));
-      return;
-    }
-
-    // Streaming chat events
-    if (msg.type === "chat" || msg.event === "chat") {
-      const data = msg.data || msg;
-
-      if (data.role === "assistant" && data.content) {
+      case "message":
         removeThinking();
-        addAssistantMessage(extractText(data.content));
-        scrollToBottom();
-      }
-
-      if (data.status === "thinking" || data.status === "running") {
-        showThinking();
-      }
-
-      if (data.status === "done" || data.status === "complete") {
-        removeThinking();
-      }
-
-      // Tool call output
-      if (data.toolOutput || data.toolResult) {
-        removeThinking();
-        const output = data.toolOutput || extractText(data.toolResult?.content);
-        if (output) {
-          addAssistantMessage("```\n" + output + "\n```");
-          scrollToBottom();
+        if (msg.role === "assistant") {
+          addAssistantMessage(msg.text || "");
         }
-      }
+        scrollToBottom();
+        break;
+
+      case "status":
+        if (msg.status === "thinking") {
+          showThinking();
+        } else if (msg.status === "done") {
+          removeThinking();
+        }
+        break;
+
+      case "error":
+        removeThinking();
+        addSystemMessage("Error: " + (msg.message || "Unknown error"));
+        break;
+
+      default:
+        console.log("Unknown message type:", msg.type);
     }
   }
 
-  function extractText(content) {
-    if (typeof content === "string") return content;
-    if (Array.isArray(content)) {
-      return content
-        .filter((c) => c.type === "text")
-        .map((c) => c.text)
-        .join("\n");
-    }
-    return "";
+  function sendMessage(text) {
+    if (!ws || ws.readyState !== 1 || !authenticated) return;
+    ws.send(JSON.stringify({ type: "message", text: text }));
   }
 
   // ── Render Messages ───────────────────────────────────────────────
   function addMessage(role, text) {
-    const div = document.createElement("div");
+    var div = document.createElement("div");
     div.className = "message " + role;
 
-    const header = document.createElement("div");
+    var header = document.createElement("div");
     header.className = "message-header";
 
-    const sender = document.createElement("span");
+    var sender = document.createElement("span");
     sender.className = "message-sender " + role;
     sender.textContent = role === "user" ? "You" : role === "assistant" ? "🦞 Clawdfather" : "System";
 
-    const time = document.createElement("span");
+    var time = document.createElement("span");
     time.className = "message-time";
     time.textContent = new Date().toLocaleTimeString();
 
     header.appendChild(sender);
     header.appendChild(time);
 
-    const body = document.createElement("div");
+    var body = document.createElement("div");
     body.className = "message-body";
     body.innerHTML = renderMarkdown(text);
 
     // Add copy buttons to code blocks
-    body.querySelectorAll("pre").forEach((pre) => {
-      const btn = document.createElement("button");
+    body.querySelectorAll("pre").forEach(function (pre) {
+      var btn = document.createElement("button");
       btn.className = "copy-btn";
       btn.textContent = "copy";
-      btn.onclick = () => {
-        const code = pre.querySelector("code");
+      btn.onclick = function () {
+        var code = pre.querySelector("code");
         navigator.clipboard.writeText(code ? code.textContent : pre.textContent);
         btn.textContent = "copied!";
-        setTimeout(() => { btn.textContent = "copy"; }, 1500);
+        setTimeout(function () { btn.textContent = "copy"; }, 1500);
       };
       pre.style.position = "relative";
       pre.appendChild(btn);
@@ -292,7 +233,7 @@
   function showThinking() {
     if (isThinking) return;
     isThinking = true;
-    const div = document.createElement("div");
+    var div = document.createElement("div");
     div.className = "thinking";
     div.id = "thinking-indicator";
     div.innerHTML =
@@ -304,12 +245,12 @@
 
   function removeThinking() {
     isThinking = false;
-    const el = document.getElementById("thinking-indicator");
+    var el = document.getElementById("thinking-indicator");
     if (el) el.remove();
   }
 
   function scrollToBottom() {
-    requestAnimationFrame(() => {
+    requestAnimationFrame(function () {
       $messages.scrollTop = $messages.scrollHeight;
     });
   }
@@ -318,32 +259,21 @@
   function renderMarkdown(text) {
     if (!text) return "";
 
-    // Escape HTML
-    let html = text
+    var html = text
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;");
 
-    // Code blocks (```lang\n...\n```)
     html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function (_, lang, code) {
       return '<pre><code class="language-' + (lang || "text") + '">' + code.trim() + "</code></pre>";
     });
 
-    // Inline code
     html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-
-    // Bold
     html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-
-    // Italic
     html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-
-    // Links
     html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
 
-    // Line breaks (but not inside <pre>)
     html = html.replace(/\n/g, "<br>");
-    // Fix double breaks inside pre (undo the damage)
     html = html.replace(/<pre><code([^>]*)>([\s\S]*?)<\/code><\/pre>/g, function (match) {
       return match.replace(/<br>/g, "\n");
     });
@@ -360,7 +290,6 @@
   });
 
   $input.addEventListener("input", function () {
-    // Auto-resize textarea
     this.style.height = "auto";
     this.style.height = Math.min(this.scrollHeight, 200) + "px";
   });
@@ -368,24 +297,24 @@
   $sendBtn.addEventListener("click", send);
 
   function send() {
-    const text = $input.value.trim();
-    if (!text) return;
+    var text = $input.value.trim();
+    if (!text || !authenticated) return;
 
     addUserMessage(text);
-    sendChat(text);
+    sendMessage(text);
     $input.value = "";
     $input.style.height = "auto";
-    showThinking();
   }
 
   // ── Hash change (new session) ─────────────────────────────────────
   window.addEventListener("hashchange", function () {
-    const hash = window.location.hash.slice(1);
-    const params = new URLSearchParams(hash);
-    const newSession = params.get("session");
+    var hash = window.location.hash.slice(1);
+    var params = new URLSearchParams(hash);
+    var newSession = params.get("session");
     if (newSession && newSession !== sessionId) {
       sessionId = newSession;
       $messages.innerHTML = "";
+      authenticated = false;
       if (ws) ws.close();
       showChat();
       $sessionDisplay.textContent = sessionId.slice(0, 8) + "...";
