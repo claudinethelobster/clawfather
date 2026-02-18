@@ -37,8 +37,9 @@ class SessionStore {
     const session = this.sessions.get(sessionId);
     if (!session) return undefined;
 
-    // Check if expired
+    // Check if expired — clean up ControlMaster before removing
     if (Date.now() - session.lastActivity > this.timeoutMs) {
+      this.cleanupControlMaster(session);
       this.sessions.delete(sessionId);
       return undefined;
     }
@@ -70,11 +71,11 @@ class SessionStore {
 
   /** Clean up a ControlMaster socket for a session */
   private cleanupControlMaster(session: Session): void {
-    const { targetUser, targetHost, controlPath, sessionId } = session;
-    console.log(`[clawdfather] Cleaning up ControlMaster for session ${sessionId} (${targetUser}@${targetHost})`);
+    const { targetUser, targetHost, targetPort, controlPath, sessionId } = session;
+    console.log(`[clawdfather] Cleaning up ControlMaster for session ${sessionId} (${targetUser}@${targetHost}:${targetPort})`);
 
-    // Send exit command to ControlMaster
-    const proc = spawn('ssh', ['-S', controlPath, '-O', 'exit', `${targetUser}@${targetHost}`], {
+    // Send exit command to ControlMaster (include port to match the original connection)
+    const proc = spawn('ssh', ['-S', controlPath, '-O', 'exit', '-p', String(targetPort), `${targetUser}@${targetHost}`], {
       stdio: ['ignore', 'ignore', 'ignore'],
     });
     proc.on('error', (err: Error) => {
