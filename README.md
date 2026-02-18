@@ -247,9 +247,9 @@ Clawdfather is a **portal app**, not a server login. It uses SSH public key auth
 > - The web UI scrubs the token from the URL and browser history immediately after extracting it on first load.
 > - The token is never written to client-side logs.
 > - Do not share session URLs over insecure channels.
-> - Sessions are bound to the SSH connection lifecycle with a short (60s) grace period after the SSH client disconnects.
+> - The SSH connection is the authoritative lease — keep your SSH terminal open while using the web UI. Disconnecting SSH (or pressing Ctrl+C) immediately revokes the web session.
 
-**Session liveness:** Every inbound WebSocket message re-validates the session against the server-side store. If the session has expired or been invalidated, the server sends an error and closes the connection immediately. When the SSH client disconnects, the session enters a 60-second grace period before it is removed — this allows brief network interruptions without destroying the session, but limits the window of exposure if the user walks away.
+**Session liveness:** Every inbound WebSocket message re-validates the session against the server-side store. If the session has expired or been invalidated, the server sends an error and closes the connection immediately. The SSH connection is the authoritative session lease — when the SSH client disconnects (or the user presses Ctrl+C), the session is removed and all connected WebSocket clients are closed instantly.
 
 **Web server singleton:** The HTTP/WebSocket server is a singleton per plugin instance. When multiple accounts are configured, they share a single server to avoid port conflicts (EADDRINUSE). The server shuts down only when the last account releases its reference.
 

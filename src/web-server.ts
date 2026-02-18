@@ -29,6 +29,22 @@ export function sendToSession(sessionId: string, data: Record<string, unknown>):
   }
 }
 
+/**
+ * Immediately close all WebSocket clients for a session and remove the map entry.
+ */
+export function closeSessionClients(
+  sessionId: string,
+  code: number = 4001,
+  reason: string = 'Session expired',
+): void {
+  const clients = wsClients.get(sessionId);
+  if (!clients) return;
+  for (const ws of clients) {
+    try { ws.close(code, reason); } catch { /* already closed */ }
+  }
+  wsClients.delete(sessionId);
+}
+
 // Singleton state for the web server so multiple accounts don't cause EADDRINUSE
 let singletonServer: HttpServer | null = null;
 let singletonRefCount = 0;

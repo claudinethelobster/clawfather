@@ -5,6 +5,7 @@ import { execSync, spawn } from 'child_process';
 import { join, dirname } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { sessionStore } from './sessions';
+import { closeSessionClients } from './web-server';
 import { ClawdfatherConfig, Session } from './types';
 
 /** ASCII art banner */
@@ -142,30 +143,22 @@ async function handleInput(
   stream.write(`\x1b[1;36m  ${url}\x1b[0m\r\n\r\n`);
   stream.write('\x1b[90m  ─────────────────────────────────────────\x1b[0m\r\n');
   stream.write(`\x1b[90m  Session: ${sessionId}\x1b[0m\r\n`);
-  stream.write(`\x1b[90m  Target:  ${dest.user}@${dest.host}:${dest.port}\x1b[0m\r\n`);
-  stream.write('\x1b[90m  Timeout: 30 minutes of inactivity\x1b[0m\r\n\r\n');
-  stream.write('\x1b[33m  You can close this terminal. Session has a 60s grace period.\x1b[0m\r\n');
-  stream.write('\x1b[90m  Press Ctrl+C or wait to disconnect.\x1b[0m\r\n');
+  stream.write(`\x1b[90m  Target:  ${dest.user}@${dest.host}:${dest.port}\x1b[0m\r\n\r\n`);
+  stream.write('\x1b[33m  Keep this SSH session open while using the web console.\x1b[0m\r\n');
+  stream.write('\x1b[90m  Press Ctrl+C to end this session and revoke web access.\x1b[0m\r\n');
 
-  const gracePeriodMs = 60_000;
+  let ended = false;
+  function endSessionNow(reason: string): void {
+    if (ended) return;
+    ended = true;
+    sessionStore.remove(sessionId);
+    closeSessionClients(sessionId, 4001, 'SSH session ended');
+    console.log(`[clawdfather] Session ${sessionId} invalidated (${reason})`);
+  }
 
-  // When the SSH client disconnects, schedule session removal after a
-  // short grace period so the user has time to open the web UI.
-  client.once('close', () => {
-    setTimeout(() => {
-      if (sessionStore.get(sessionId)) {
-        sessionStore.remove(sessionId);
-        console.log(`[clawdfather] Session ${sessionId} invalidated (SSH disconnected after grace period)`);
-      }
-    }, gracePeriodMs);
-  });
-
-  setTimeout(() => {
-    stream.write('\r\n\x1b[90m  Closing SSH session. Web console remains active for 60s grace period.\x1b[0m\r\n');
-    stream.write('\x1b[33m  Goodbye! 🐾\x1b[0m\r\n');
-    try { stream.close(); } catch (_e: unknown) { /* ignore */ }
-    client.end();
-  }, 30_000);
+  client.once('close', () => endSessionNow('SSH client closed'));
+  client.once('end', () => endSessionNow('SSH client ended'));
+  client.once('error', () => endSessionNow('SSH client error'));
 }
 
 /** Start the Clawdfather SSH server */
