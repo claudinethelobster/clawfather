@@ -157,7 +157,20 @@ export function startWebServer(
   // WebSocket server
   const wss = new WebSocketServer({ server });
 
-  wss.on("connection", (ws: WebSocket) => {
+  wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
+    const wsOrigin = req.headers.origin;
+    // Explicit WS origin enforcement: require an Origin header and validate
+    // against the same allowlist policy used for HTTP CORS.
+    if (!wsOrigin) {
+      ws.close(4003, "Origin required");
+      return;
+    }
+    const allowed = resolveAllowedOrigin(wsOrigin, config);
+    if (!allowed) {
+      ws.close(4003, "Origin not allowed");
+      return;
+    }
+
     let authenticatedSessionId: string | null = null;
     let keyFingerprint = "unknown";
 

@@ -11,13 +11,19 @@
       "webDomain": { "type": "string", "default": "localhost" },
       "sessionTimeoutMs": { "type": "number", "default": 1800000 },
       "hostKeyPath": { "type": "string" },
-      "webPort": { "type": "number", "default": 3000 }
+      "webPort": { "type": "number", "default": 3000 },
+      "allowedOrigins": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Allowed CORS/WebSocket origins. Omit for same-origin only. Use [\"*\"] for permissive (not recommended)."
+      }
     }
   },
   "uiHints": {
     "sshPort": { "label": "SSH Server Port", "placeholder": "22" },
     "webDomain": { "label": "Web Domain", "placeholder": "clawdfather.ai" },
     "hostKeyPath": { "label": "Host Key Path", "sensitive": false },
-    "webPort": { "label": "Web UI Port", "placeholder": "3000" }
+    "webPort": { "label": "Web UI Port", "placeholder": "3000" },
+    "allowedOrigins": { "label": "Allowed Origins", "placeholder": "https://clawdfather.ai, https://admin.example.com" }
   }
 }
