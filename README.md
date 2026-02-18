@@ -33,6 +33,52 @@ Clawdfather lets you connect to any server via SSH and get an AI assistant that 
 - **SSH** client on the host machine
 - An SSH key loaded in your local agent (`ssh-add`)
 
+## Host Preparation
+
+Before installing Clawdfather, you need to free up **port 22** on the host. Clawdfather listens on port 22 so users can simply `ssh -A clawdfather.ai` — no `-p` flag needed. The host's standard sshd moves to port 2222 for admin access.
+
+> ⚠️ **WARNING:** Follow these steps carefully. If you change sshd's port and can't connect on the new port, you will be locked out of your server. **Always test the new port before closing your current session.**
+
+**Step 1.** Edit `/etc/ssh/sshd_config`:
+
+```
+Port 2222
+```
+
+**Step 2.** If using SELinux, allow the new port:
+
+```bash
+semanage port -a -t ssh_port_t -p tcp 2222
+```
+
+**Step 3.** Update firewall to allow the new port:
+
+```bash
+# UFW
+ufw allow 2222/tcp
+ufw reload
+
+# Or firewalld
+firewall-cmd --permanent --add-port=2222/tcp
+firewall-cmd --reload
+```
+
+**Step 4.** Restart sshd:
+
+```bash
+systemctl restart sshd
+```
+
+**Step 5. 🚨 CRITICAL: Test the new sshd port BEFORE closing your current session:**
+
+```bash
+ssh -p 2222 user@clawdfather.ai
+```
+
+Open a **new terminal** and verify you can connect. Do NOT close your existing session until this works.
+
+**Step 6.** Once confirmed, port 22 is free for Clawdfather. Continue with installation below.
+
 ## Installation
 
 ### From source (development)
@@ -194,63 +240,9 @@ Clawdfather is a **portal app**, not a server login. It uses SSH public key auth
 
 Create an **A record** pointing `clawdfather.ai` (or your domain) to your server's public IP.
 
-### 2. SSH Port — Clawdfather Owns Port 22
+### 2. SSH Port
 
-Clawdfather defaults to **port 22** so users can simply run:
-
-```bash
-ssh -A clawdfather.ai
-```
-
-No `-p` flag needed. This is the user-friendly approach — but it means **you must move the host's sshd to a different port** (we recommend 2222) for admin access.
-
-#### Moving sshd to Port 2222
-
-> ⚠️ **WARNING:** Follow these steps carefully. If you change sshd's port and can't connect on the new port, you will be locked out of your server. **Always test the new port before closing your current session.**
-
-**Step 1.** Edit `/etc/ssh/sshd_config`:
-
-```
-Port 2222
-```
-
-**Step 2.** If using SELinux, allow the new port:
-
-```bash
-semanage port -a -t ssh_port_t -p tcp 2222
-```
-
-**Step 3.** Update firewall to allow the new port:
-
-```bash
-# UFW
-ufw allow 2222/tcp
-ufw reload
-
-# Or firewalld
-firewall-cmd --permanent --add-port=2222/tcp
-firewall-cmd --reload
-```
-
-**Step 4.** Restart sshd:
-
-```bash
-systemctl restart sshd
-```
-
-**Step 5. 🚨 CRITICAL: Test the new sshd port BEFORE closing your current session:**
-
-```bash
-ssh -p 2222 user@clawdfather.ai
-```
-
-Open a **new terminal** and verify you can connect. Do NOT close your existing session until this works.
-
-**Step 6.** Once confirmed working, Clawdfather can bind port 22. Restart the OpenClaw gateway:
-
-```bash
-openclaw gateway restart
-```
+Clawdfather listens on **port 22** by default (configured in [Host Preparation](#host-preparation) above). Ensure sshd has been moved to port 2222 before starting the gateway.
 
 **Step 7.** Update firewall for the full setup:
 
