@@ -198,7 +198,41 @@ For `clawdfather.ai` to work, you need:
 
 1. **DNS A record** pointing `clawdfather.ai` to your OpenClaw host
 2. **Port forwarding** for SSH port (default 22) and Gateway port (18789)
-3. **TLS** for the web UI (use Tailscale Serve, nginx, or Caddy as reverse proxy)
+3. **TLS** for the web UI (Caddy recommended — auto-provisions Let's Encrypt certs)
+
+> **Note:** SSH traffic (port 22) goes directly to the Clawfather SSH server, not through Caddy. Only HTTP/HTTPS/WebSocket traffic is reverse-proxied.
+
+### Example with Caddy (recommended)
+
+Caddy handles TLS automatically via Let's Encrypt — no cert configuration needed.
+
+```caddyfile
+clawdfather.ai {
+    # Visiting the root redirects to the web UI
+    redir / /clawfather/ permanent
+
+    # Proxy everything to the OpenClaw Gateway
+    # Caddy automatically handles WebSocket upgrade headers
+    reverse_proxy * localhost:18789
+}
+```
+
+Install and run:
+
+```bash
+# Install Caddy (https://caddyserver.com/docs/install)
+sudo apt install -y caddy    # Debian/Ubuntu
+# or: brew install caddy      # macOS
+
+# Start with your Caddyfile
+sudo caddy start --config /etc/caddy/Caddyfile
+```
+
+That's it. Caddy will:
+- Obtain and renew TLS certificates automatically
+- Proxy HTTP requests to the OpenClaw Gateway (port 18789)
+- Handle WebSocket connections transparently (needed for Gateway WS)
+- Redirect `https://clawdfather.ai/` → `https://clawdfather.ai/clawfather/`
 
 ### Example with Tailscale
 
@@ -208,29 +242,6 @@ openclaw gateway --tailscale serve
 
 # SSH is available on your Tailscale IP
 ssh -A your-machine.tail1234.ts.net
-```
-
-### Example with nginx
-
-```nginx
-server {
-    server_name clawdfather.ai;
-    listen 443 ssl;
-    # ... SSL config ...
-
-    # Web UI
-    location /clawfather/ {
-        proxy_pass http://127.0.0.1:18789/clawfather/;
-    }
-
-    # Gateway WebSocket
-    location / {
-        proxy_pass http://127.0.0.1:18789;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
 ```
 
 ## Development
