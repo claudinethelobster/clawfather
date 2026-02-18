@@ -31,7 +31,7 @@ export interface ExecResult {
 }
 
 /** Plugin configuration from openclaw.plugin.json */
-export interface ClawfatherConfig {
+export interface ClawdfatherConfig {
   sshPort: number;
   webDomain: string;
   sessionTimeoutMs: number;

@@ -1,9 +1,9 @@
 /**
- * Clawfather — OpenClaw Plugin Entry Point
+ * Clawdfather — OpenClaw Plugin Entry Point
  *
  * Registers:
  *  - SSH server as a background service
- *  - Gateway RPC: clawfather.sessions, clawfather.session
+ *  - Gateway RPC: clawdfather.sessions, clawdfather.session
  *  - Gateway HTTP handler to serve the web UI
  *
  * The agent uses native OpenClaw `exec` tool with SSH ControlMaster
@@ -14,7 +14,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { sessionStore } from "./sessions";
 import { startSSHServer } from "./ssh-server";
-import type { ClawfatherConfig } from "./types";
+import type { ClawdfatherConfig } from "./types";
 
 // Resolve plugin root for serving static UI files
 const PLUGIN_ROOT = typeof __dirname !== "undefined"
@@ -22,21 +22,21 @@ const PLUGIN_ROOT = typeof __dirname !== "undefined"
   : ".";
 
 export default function register(api: any) {
-  const config: ClawfatherConfig = {
+  const config: ClawdfatherConfig = {
     sshPort: 22,
     webDomain: "localhost",
     sessionTimeoutMs: 1800000,
-    ...api.config?.plugins?.entries?.clawfather?.config,
+    ...api.config?.plugins?.entries?.clawdfather?.config,
   };
   let sshServer: any = null;
 
   // ── Background Service ──────────────────────────────────────────────
   api.registerService({
-    id: "clawfather-ssh",
+    id: "clawdfather-ssh",
     start: () => {
       sessionStore.start(config.sessionTimeoutMs);
       sshServer = startSSHServer(config);
-      api.logger.info("[clawfather] Service started");
+      api.logger.info("[clawdfather] Service started");
     },
     stop: () => {
       sessionStore.stop();
@@ -44,12 +44,12 @@ export default function register(api: any) {
         sshServer.close();
         sshServer = null;
       }
-      api.logger.info("[clawfather] Service stopped");
+      api.logger.info("[clawdfather] Service stopped");
     },
   });
 
   // ── Gateway RPC: session list ───────────────────────────────────────
-  api.registerGatewayMethod("clawfather.sessions", ({ respond }: any) => {
+  api.registerGatewayMethod("clawdfather.sessions", ({ respond }: any) => {
     const list = sessionStore.list().map((s) => ({
       id: s.sessionId,
       keyFingerprint: s.keyFingerprint,
@@ -62,7 +62,7 @@ export default function register(api: any) {
   });
 
   // ── Gateway RPC: single session info ────────────────────────────────
-  api.registerGatewayMethod("clawfather.session", ({ params, respond }: any) => {
+  api.registerGatewayMethod("clawdfather.session", ({ params, respond }: any) => {
     const session = sessionStore.get(params?.sessionId);
     if (!session) {
       respond(false, { error: "Session not found or expired" });
@@ -87,10 +87,10 @@ export default function register(api: any) {
   };
 
   api.registerGatewayHttp?.({
-    path: "/clawfather",
+    path: "/clawdfather",
     handler: (req: any, res: any) => {
       const uiDir = join(PLUGIN_ROOT, "ui");
-      const url = (req.url ?? "").replace(/^\/clawfather\/?/, "") || "index.html";
+      const url = (req.url ?? "").replace(/^\/clawdfather\/?/, "") || "index.html";
       const safe = url.replace(/[^a-zA-Z0-9._-]/g, "");
 
       if (!["index.html", "style.css", "app.js"].includes(safe)) {

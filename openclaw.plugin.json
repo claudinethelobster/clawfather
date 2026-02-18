@@ -1,6 +1,6 @@
 {
-  "id": "clawfather",
-  "name": "Clawfather",
+  "id": "clawdfather",
+  "name": "Clawdfather",
   "description": "Secure server administration over SSH with AI-powered chat UI",
   "version": "0.1.0",
   "configSchema": {

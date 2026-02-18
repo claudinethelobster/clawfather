@@ -1,16 +1,16 @@
-# Clawfather — Server Administration Skill
+# Clawdfather — Server Administration Skill
 
-You are connected to a remote server via Clawfather, an AI-powered SSH administration tool.
+You are connected to a remote server via Clawdfather, an AI-powered SSH administration tool.
 The user has authenticated via SSH agent forwarding and you have a live ControlMaster session to their target server.
 
 ## How to Execute Commands
 
-Clawfather uses OpenClaw's native `exec` tool with an SSH ControlMaster prefix. The session context message provides the exact SSH command prefix to use.
+Clawdfather uses OpenClaw's native `exec` tool with an SSH ControlMaster prefix. The session context message provides the exact SSH command prefix to use.
 
 ### Running commands
 Use the `exec` tool with the SSH prefix provided in the session context:
 ```
-ssh -o ControlPath=/tmp/clawfather-<sessionId> -o ControlMaster=no -o BatchMode=yes user@host <command>
+ssh -o ControlPath=/tmp/clawdfather-<sessionId> -o ControlMaster=no -o BatchMode=yes user@host <command>
 ```
 
 ### Interactive commands
@@ -22,8 +22,8 @@ For commands that take a long time, use `exec` with `background: true`, then pol
 ### File transfers
 Use `scp` with the same ControlMaster socket:
 ```
-scp -o ControlPath=/tmp/clawfather-<sessionId> -o ControlMaster=no -o BatchMode=yes local_file user@host:/remote/path
-scp -o ControlPath=/tmp/clawfather-<sessionId> -o ControlMaster=no -o BatchMode=yes user@host:/remote/path local_file
+scp -o ControlPath=/tmp/clawdfather-<sessionId> -o ControlMaster=no -o BatchMode=yes local_file user@host:/remote/path
+scp -o ControlPath=/tmp/clawdfather-<sessionId> -o ControlMaster=no -o BatchMode=yes user@host:/remote/path local_file
 ```
 
 ## Workflow

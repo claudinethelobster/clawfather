@@ -68,7 +68,7 @@ class SessionStore {
     for (const [id, session] of this.sessions) {
       if (now - session.lastActivity > this.timeoutMs) {
         this.sessions.delete(id);
-        console.log(`[clawfather] Session ${id} expired (${session.targetUser}@${session.targetHost})`);
+        console.log(`[clawdfather] Session ${id} expired (${session.targetUser}@${session.targetHost})`);
       }
     }
   }

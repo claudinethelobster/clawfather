@@ -5,7 +5,7 @@ import { execSync, spawn } from 'child_process';
 import { join, dirname } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { sessionStore } from './sessions';
-import { ClawfatherConfig, Session } from './types';
+import { ClawdfatherConfig, Session } from './types';
 
 /** ASCII art banner */
 const BANNER = `\r
@@ -25,7 +25,7 @@ function ensureHostKey(keyPath: string): Buffer {
   if (!existsSync(keyPath)) {
     const dir = dirname(keyPath);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    console.log(`[clawfather] Generating SSH host key at ${keyPath}`);
+    console.log(`[clawdfather] Generating SSH host key at ${keyPath}`);
     execSync(`ssh-keygen -t ed25519 -f "${keyPath}" -N "" -q`);
   }
   return readFileSync(keyPath);
@@ -85,7 +85,7 @@ function establishControlMaster(
 
     proc.on('error', (err: Error) => {
       clearTimeout(timer);
-      console.error(`[clawfather] SSH spawn error: ${err.message}`);
+      console.error(`[clawdfather] SSH spawn error: ${err.message}`);
       resolve(false);
     });
   });
@@ -96,7 +96,7 @@ async function handleInput(
   stream: any,
   input: string,
   client: Connection,
-  config: ClawfatherConfig,
+  config: ClawdfatherConfig,
   keyFingerprint: string
 ): Promise<void> {
   const dest = parseDestination(input);
@@ -109,7 +109,7 @@ async function handleInput(
   stream.write(`\r\n\x1b[90m  Connecting to ${dest.user}@${dest.host}:${dest.port}...\x1b[0m\r\n`);
 
   const sessionId = uuidv4();
-  const controlPath = `/tmp/clawfather-${sessionId}`;
+  const controlPath = `/tmp/clawdfather-${sessionId}`;
 
   const success = await establishControlMaster(dest.user, dest.host, dest.port, controlPath);
 
@@ -155,13 +155,13 @@ async function handleInput(
   }, 30_000);
 }
 
-/** Start the Clawfather SSH server */
-export function startSSHServer(config: ClawfatherConfig): Server {
+/** Start the Clawdfather SSH server */
+export function startSSHServer(config: ClawdfatherConfig): Server {
   const keyPath = config.hostKeyPath || join(__dirname, '..', 'keys', 'host_ed25519');
   const hostKey = ensureHostKey(keyPath);
 
   const server = new Server({ hostKeys: [hostKey] }, (client: Connection) => {
-    console.log('[clawfather] Client connected');
+    console.log('[clawdfather] Client connected');
 
     let keyFingerprint = '';
 
@@ -169,7 +169,7 @@ export function startSSHServer(config: ClawfatherConfig): Server {
       if (ctx.method === 'publickey') {
         const fingerprint = createHash('sha256').update(ctx.key.data).digest('base64');
         keyFingerprint = `SHA256:${fingerprint}`;
-        console.log(`[clawfather] Public key auth: ${keyFingerprint}`);
+        console.log(`[clawdfather] Public key auth: ${keyFingerprint}`);
         ctx.accept();
       } else {
         ctx.reject(['publickey']);
@@ -177,7 +177,7 @@ export function startSSHServer(config: ClawfatherConfig): Server {
     });
 
     client.on('ready', () => {
-      console.log('[clawfather] Client authenticated');
+      console.log('[clawdfather] Client authenticated');
 
       client.on('session', (accept) => {
         const session = accept();
@@ -222,20 +222,20 @@ export function startSSHServer(config: ClawfatherConfig): Server {
     });
 
     client.on('error', (err: Error) => {
-      console.error(`[clawfather] Client error: ${err.message}`);
+      console.error(`[clawdfather] Client error: ${err.message}`);
     });
 
     client.on('close', () => {
-      console.log('[clawfather] Client disconnected');
+      console.log('[clawdfather] Client disconnected');
     });
   });
 
   server.listen(config.sshPort, '0.0.0.0', () => {
-    console.log(`[clawfather] SSH server listening on port ${config.sshPort}`);
+    console.log(`[clawdfather] SSH server listening on port ${config.sshPort}`);
   });
 
   server.on('error', (err: Error) => {
-    console.error(`[clawfather] Server error: ${err.message}`);
+    console.error(`[clawdfather] Server error: ${err.message}`);
   });
 
   return server;

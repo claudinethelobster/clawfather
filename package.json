@@ -1,5 +1,5 @@
 {
-  "name": "clawfather",
+  "name": "clawdfather",
   "version": "0.1.0",
   "description": "Secure server administration over SSH with AI-powered chat UI",
   "main": "src/index.ts",

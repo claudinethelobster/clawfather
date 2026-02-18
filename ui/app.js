@@ -1,5 +1,5 @@
 /**
- * Clawfather Web UI — Client-side application
+ * Clawdfather Web UI — Client-side application
  *
  * Connects to OpenClaw Gateway WebSocket and provides a chat interface
  * for AI-powered server administration.
@@ -95,7 +95,7 @@
 
       // Fetch session info via Gateway RPC
       sessionInfoRpcId = Date.now();
-      sendRpc("clawfather.session", { sessionId: sessionId });
+      sendRpc("clawdfather.session", { sessionId: sessionId });
     };
 
     ws.onmessage = function (event) {
@@ -134,7 +134,7 @@
   function sendChat(text) {
     sendRpc("chat.send", {
       message: text,
-      sessionKey: "clawfather:" + sessionId,
+      sessionKey: "clawdfather:" + sessionId,
     });
   }
 
@@ -142,7 +142,7 @@
   function handleMessage(msg) {
     // RPC response
     if (msg.id && msg.result) {
-      // Session info response from clawfather.session
+      // Session info response from clawdfather.session
       if (msg.result.targetUser && msg.result.controlPath) {
         var info = msg.result;
         serverTarget = info.targetUser + "@" + info.targetHost;
@@ -160,11 +160,11 @@
         addSystemMessage("Connected to " + serverTarget);
 
         // Load chat history
-        sendRpc("chat.history", { sessionKey: "clawfather:" + sessionId });
+        sendRpc("chat.history", { sessionKey: "clawdfather:" + sessionId });
 
         // Send initial context with SSH prefix for the agent
         sendChat(
-          "[System: Clawfather session active. Connected to " + serverTarget + ".\n\n" +
+          "[System: Clawdfather session active. Connected to " + serverTarget + ".\n\n" +
           "To run commands on the connected server, use the exec tool with:\n" +
           sshPrefix + " <command>\n\n" +
           "For interactive commands, use exec with pty:true.\n" +
@@ -251,7 +251,7 @@
 
     const sender = document.createElement("span");
     sender.className = "message-sender " + role;
-    sender.textContent = role === "user" ? "You" : role === "assistant" ? "🦞 Clawfather" : "System";
+    sender.textContent = role === "user" ? "You" : role === "assistant" ? "🦞 Clawdfather" : "System";
 
     const time = document.createElement("span");
     time.className = "message-time";
