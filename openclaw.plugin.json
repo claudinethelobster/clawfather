@@ -1,0 +1,21 @@
+{
+  "id": "clawfather",
+  "name": "Clawfather",
+  "description": "Secure server administration over SSH with AI-powered chat UI",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sshPort": { "type": "number", "default": 2222 },
+      "webDomain": { "type": "string", "default": "localhost" },
+      "sessionTimeoutMs": { "type": "number", "default": 1800000 },
+      "hostKeyPath": { "type": "string" }
+    }
+  },
+  "uiHints": {
+    "sshPort": { "label": "SSH Server Port", "placeholder": "2222" },
+    "webDomain": { "label": "Web Domain", "placeholder": "clawfather.ai" },
+    "hostKeyPath": { "label": "Host Key Path", "sensitive": false }
+  }
+}

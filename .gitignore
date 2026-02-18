@@ -1,0 +1,6 @@
+node_modules/
+dist/
+keys/host_key*
+!keys/.gitkeep
+*.log
+.DS_Store

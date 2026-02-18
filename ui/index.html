@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clawfather — Server Admin</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦞</text></svg>">
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-left">
+        <span class="logo">🦞</span>
+        <div>
+          <div class="header-title">CLAWFATHER</div>
+          <div class="header-subtitle">AI Server Admin</div>
+        </div>
+      </div>
+      <div id="status-badge" class="status-badge disconnected">
+        <span class="status-dot"></span>
+        <span id="status-text">disconnected</span>
+      </div>
+    </div>
+
+    <!-- Server info bar (hidden until connected) -->
+    <div id="server-info" class="server-info" style="display: none;">
+      <span><span class="label">target:</span> <span class="value" id="target-display">—</span></span>
+      <span><span class="label">session:</span> <span class="value" id="session-display">—</span></span>
+    </div>
+
+    <!-- Welcome screen (shown when no session) -->
+    <div id="welcome" class="welcome">
+      <div class="welcome-logo">🦞</div>
+      <h2>Welcome to Clawfather</h2>
+      <p>Connect to a server via SSH to start an AI-powered admin session. Run the following command with agent forwarding:</p>
+      <code>ssh -A clawfather.ai</code>
+    </div>
+
+    <!-- Messages (hidden until session active) -->
+    <div id="messages" class="messages" style="display: none;"></div>
+
+    <!-- Input area (hidden until session active) -->
+    <div id="input-area" class="input-area" style="display: none;">
+      <div class="input-row">
+        <textarea id="message-input" rows="1" placeholder="Ask me to manage your server..." autofocus></textarea>
+        <button id="send-btn">Send</button>
+      </div>
+      <div class="input-hint">Enter to send · Shift+Enter for newline</div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
