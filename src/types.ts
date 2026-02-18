@@ -2,6 +2,8 @@
 export interface Session {
   /** Unique session identifier */
   sessionId: string;
+  /** SSH public key fingerprint of the user */
+  keyFingerprint: string;
   /** Target SSH hostname or IP */
   targetHost: string;
   /** Target SSH username */

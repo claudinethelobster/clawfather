@@ -20,7 +20,7 @@ Clawfather lets you connect to any server via SSH and get an AI assistant that c
                           └───────────────┘
 ```
 
-1. **SSH in** — `ssh -A clawfather.ai` (with agent forwarding)
+1. **SSH in** — `ssh -A clawdfather.ai` (with agent forwarding)
 2. **Pick your target** — Enter `user@host` at the prompt
 3. **Agent auth** — Your SSH agent signs the handshake to the target (no passwords stored)
 4. **Get a URL** — A web chat URL is returned with your session ID
@@ -66,11 +66,9 @@ Add to your OpenClaw config (`openclaw.json`):
         enabled: true,
         config: {
           sshPort: 22,           // Port for the SSH server
-          webDomain: "clawfather.ai", // Domain for the web UI URL
-          webProto: "https",       // http or https
+          webDomain: "clawdfather.ai", // Domain for the web UI URL
           sessionTimeoutMs: 1800000, // 30 min default
           // hostKeyPath: "..."     // Optional custom host key
-          // controlPathDir: "/tmp" // Where ControlMaster sockets live
         }
       }
     }
@@ -91,7 +89,7 @@ openclaw gateway restart
 ### 1. Connect via SSH
 
 ```bash
-ssh -A clawfather.ai
+ssh -A clawdfather.ai
 ```
 
 > **Note:** `-A` enables agent forwarding. Your local SSH keys are used to authenticate to the target server — nothing is stored by Clawfather.
@@ -115,7 +113,7 @@ ssh -A clawfather.ai
   ┌─────────────────────────────────────────────────────┐
   │  🌐 Open your admin console:                       │
   │                                                     │
-  │  https://clawfather.ai/#session=a1b2c3d4-...       │
+  │  https://clawdfather.ai/#session=a1b2c3d4-...       │
   │                                                     │
   │  Session: a1b2c3d4...                               │
   │  Target:  root@10.0.0.5                             │
@@ -169,19 +167,36 @@ Clawfather does **not** register custom agent tools. Instead, the web UI injects
 | `clawfather.sessions` | List all active sessions |
 | `clawfather.session` | Get info about a specific session |
 
-### Security Model
+### Security Model — Public Key Authentication
 
-- **No credentials stored** — All auth uses SSH agent forwarding
+Clawfather uses **public key authentication only** (like [terminal.shop](https://terminal.shop)). Password auth is rejected. Here's how it works:
+
+**Two-stage authentication:**
+
+1. **You → Clawfather portal:** Your SSH client proves identity via public key cryptography. Clawfather accepts any valid public key signature — no account creation needed. Your private key never leaves your machine; only the signature is verified.
+2. **Clawfather → Target server:** Your SSH agent forwarding (`-A`) allows Clawfather to authenticate to the target server on your behalf. The agent protocol never exposes your private key — it only asks your local agent to sign challenges.
+
+**Why this is secure:**
+
+- **No passwords anywhere** — Cryptographic identity only. Nothing to phish, leak, or brute-force.
+- **Private key stays local** — Your key never leaves your machine. Not during portal auth, not during target auth.
+- **Fingerprint-based identity** — Each user is identified by their key's SHA256 fingerprint. No usernames or emails needed.
+- **Session isolation** — Each session has a unique UUID and its own ControlMaster socket.
+- **Gateway auth** — The web UI still requires your OpenClaw gateway token/password.
+
+**What this does NOT affect:** Public key auth to Clawfather controls who can create sessions. What you can do on the target server is entirely determined by the target server's own SSH authorization for your forwarded key. Clawfather doesn't add or remove any permissions on the target.
+
+**Future possibilities:** Key fingerprints enable allowlists (restrict who can use your Clawfather instance), per-user billing, and audit trails — all without any account system.
+
+Additional safeguards:
 - **ControlMaster sessions** — Persist for 30 min, auto-cleaned
-- **Gateway auth** — Web UI requires OpenClaw gateway token/password
-- **Session isolation** — Each session has a unique UUID and ControlMaster socket
 - **Tool safety** — AI follows strict rules about destructive commands (see SKILL.md)
 
 ## DNS/Networking Setup
 
-For `clawfather.ai` to work, you need:
+For `clawdfather.ai` to work, you need:
 
-1. **DNS A record** pointing `clawfather.ai` to your OpenClaw host
+1. **DNS A record** pointing `clawdfather.ai` to your OpenClaw host
 2. **Port forwarding** for SSH port (default 22) and Gateway port (18789)
 3. **TLS** for the web UI (use Tailscale Serve, nginx, or Caddy as reverse proxy)
 
@@ -199,7 +214,7 @@ ssh -A your-machine.tail1234.ts.net
 
 ```nginx
 server {
-    server_name clawfather.ai;
+    server_name clawdfather.ai;
     listen 443 ssl;
     # ... SSL config ...
 
@@ -246,7 +261,7 @@ openclaw gateway restart
 
 **Session expired**
 - Sessions timeout after 30 min of inactivity (configurable)
-- Re-run `ssh -A clawfather.ai` to create a new session
+- Re-run `ssh -A clawdfather.ai` to create a new session
 
 ## License
 

@@ -52,6 +52,7 @@ export default function register(api: any) {
   api.registerGatewayMethod("clawfather.sessions", ({ respond }: any) => {
     const list = sessionStore.list().map((s) => ({
       id: s.sessionId,
+      keyFingerprint: s.keyFingerprint,
       target: `${s.targetUser}@${s.targetHost}:${s.targetPort}`,
       controlPath: s.controlPath,
       connectedAt: s.connectedAt,
@@ -70,6 +71,7 @@ export default function register(api: any) {
     sessionStore.touch(session.sessionId);
     respond(true, {
       id: session.sessionId,
+      keyFingerprint: session.keyFingerprint,
       targetUser: session.targetUser,
       targetHost: session.targetHost,
       targetPort: session.targetPort,

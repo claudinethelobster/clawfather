@@ -1,4 +1,5 @@
 import { Server, Connection } from 'ssh2';
+import { createHash } from 'crypto';
 import { readFileSync, existsSync, mkdirSync } from 'fs';
 import { execSync, spawn } from 'child_process';
 import { join, dirname } from 'path';
@@ -95,7 +96,8 @@ async function handleInput(
   stream: any,
   input: string,
   client: Connection,
-  config: ClawfatherConfig
+  config: ClawfatherConfig,
+  keyFingerprint: string
 ): Promise<void> {
   const dest = parseDestination(input);
   if (!dest) {
@@ -120,6 +122,7 @@ async function handleInput(
 
   const session: Session = {
     sessionId,
+    keyFingerprint,
     targetHost: dest.host,
     targetUser: dest.user,
     targetPort: dest.port,
@@ -160,8 +163,17 @@ export function startSSHServer(config: ClawfatherConfig): Server {
   const server = new Server({ hostKeys: [hostKey] }, (client: Connection) => {
     console.log('[clawfather] Client connected');
 
+    let keyFingerprint = '';
+
     client.on('authentication', (ctx) => {
-      ctx.accept();
+      if (ctx.method === 'publickey') {
+        const fingerprint = createHash('sha256').update(ctx.key.data).digest('base64');
+        keyFingerprint = `SHA256:${fingerprint}`;
+        console.log(`[clawfather] Public key auth: ${keyFingerprint}`);
+        ctx.accept();
+      } else {
+        ctx.reject(['publickey']);
+      }
     });
 
     client.on('ready', () => {
@@ -187,7 +199,7 @@ export function startSSHServer(config: ClawfatherConfig): Server {
             for (const char of str) {
               if (char === '\r' || char === '\n') {
                 stream.write('\r\n');
-                handleInput(stream, inputBuffer, client, config);
+                handleInput(stream, inputBuffer, client, config, keyFingerprint);
                 inputBuffer = '';
                 return;
               } else if (char === '\x7f' || char === '\b') {

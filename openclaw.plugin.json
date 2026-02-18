@@ -15,7 +15,7 @@
   },
   "uiHints": {
     "sshPort": { "label": "SSH Server Port", "placeholder": "22" },
-    "webDomain": { "label": "Web Domain", "placeholder": "clawfather.ai" },
+    "webDomain": { "label": "Web Domain", "placeholder": "clawdfather.ai" },
     "hostKeyPath": { "label": "Host Key Path", "sensitive": false }
   }
 }
