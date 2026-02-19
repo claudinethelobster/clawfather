@@ -19,6 +19,7 @@
   const $sessionDisplay = document.getElementById("session-display");
   const $welcome = document.getElementById("welcome");
   const $inputArea = document.getElementById("input-area");
+  const $connectionHint = document.getElementById("connection-hint");
 
   // ── State ─────────────────────────────────────────────────────────
   let ws = null;
@@ -29,9 +30,40 @@
   let reconnectDelay = 1000;
   let authenticated = false;
   let bootstrapSent = false;
+  let leaseEnded = false;
+
+  // ── Welcome copy buttons ──────────────────────────────────────────
+  function initWelcomeCopyButtons() {
+    document.querySelectorAll(".step-copy-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var cmd = btn.getAttribute("data-cmd");
+        if (!cmd) return;
+        navigator.clipboard.writeText(cmd).then(function () {
+          btn.textContent = "copied!";
+          btn.classList.add("copied");
+          setTimeout(function () {
+            btn.textContent = "copy";
+            btn.classList.remove("copied");
+          }, 1500);
+        }).catch(function () {
+          var row = btn.closest(".step-cmd-row");
+          var codeEl = row && row.querySelector(".step-cmd");
+          if (codeEl) {
+            var range = document.createRange();
+            range.selectNodeContents(codeEl);
+            var sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+          }
+        });
+      });
+    });
+  }
 
   // ── Init ──────────────────────────────────────────────────────────
   function init() {
+    initWelcomeCopyButtons();
+
     // Extract session from URL hash then immediately scrub it
     const hash = window.location.hash.slice(1);
     const params = new URLSearchParams(hash);
@@ -81,11 +113,25 @@
 
   function setStatus(status) {
     $statusBadge.className = "status-badge " + status;
-    $statusText.textContent = status;
+    var label = status;
+    if (status === "lease-ended") label = "session ended";
+    $statusText.textContent = label;
+    if ($connectionHint) {
+      if (status === "lease-ended") {
+        $connectionHint.textContent = "Start a new SSH session to reconnect";
+        $connectionHint.style.display = "";
+      } else if (status === "disconnected" || status === "connecting") {
+        $connectionHint.textContent = "ssh-add <key>, then ssh -A";
+        $connectionHint.style.display = "";
+      } else {
+        $connectionHint.style.display = "none";
+      }
+    }
   }
 
   // ── WebSocket ─────────────────────────────────────────────────────
   function connect() {
+    if (leaseEnded) return;
     if (ws && ws.readyState <= 1) return;
 
     setStatus("connecting");
@@ -113,10 +159,17 @@
       }
     };
 
-    ws.onclose = function () {
-      setStatus("disconnected");
+    ws.onclose = function (event) {
       authenticated = false;
-      scheduleReconnect();
+      if (event.code === 4001) {
+        leaseEnded = true;
+        setStatus("lease-ended");
+        addSystemMessage("Connection lease has ended. Your session is closed \u2014 start a new SSH session (`ssh -A`) to reconnect.");
+        disableInput();
+      } else {
+        setStatus("disconnected");
+        if (!leaseEnded) scheduleReconnect();
+      }
     };
 
     ws.onerror = function (err) {
@@ -291,6 +344,23 @@
     return html;
   }
 
+  // ── Disable input (lease ended) ───────────────────────────────────
+  function disableInput() {
+    $input.disabled = true;
+    $sendBtn.disabled = true;
+    $inputArea.classList.add("disabled");
+
+    // Add a sticky banner above the input to explain the state
+    if (!document.getElementById("lease-ended-banner")) {
+      var banner = document.createElement("div");
+      banner.id = "lease-ended-banner";
+      banner.className = "lease-ended-banner";
+      banner.textContent = "\uD83D\uDD12 Connection lease has ended. Reconnect to continue.";
+      // Insert before the input area so it appears above it
+      $inputArea.parentNode.insertBefore(banner, $inputArea);
+    }
+  }
+
   // ── Input Handling ────────────────────────────────────────────────
   $input.addEventListener("keydown", function (e) {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -324,6 +394,7 @@
     if (newSession && newSession !== sessionId) {
       sessionId = newSession;
       bootstrapSent = false;
+      leaseEnded = false;
 
       // Scrub token from URL immediately
       if (window.history && window.history.replaceState) {
@@ -334,6 +405,12 @@
 
       $messages.innerHTML = "";
       authenticated = false;
+      $input.disabled = false;
+      $sendBtn.disabled = false;
+      $inputArea.classList.remove("disabled");
+      // Remove lease-ended banner if present from previous session
+      var oldBanner = document.getElementById("lease-ended-banner");
+      if (oldBanner) oldBanner.remove();
       if (ws) ws.close();
       showChat();
       $sessionDisplay.textContent = sessionId.slice(0, 8) + "...";

@@ -402,6 +402,169 @@ pre:hover .copy-btn {
   border: 1px solid var(--border);
 }
 
+/* ─── Welcome steps ─── */
+
+.welcome-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 520px;
+  text-align: left;
+}
+
+.welcome-step-block {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  transition: border-color 0.15s;
+}
+
+.welcome-step-block:hover {
+  border-color: var(--accent-dim);
+}
+
+.step-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.step-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.step-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.step-cmd-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.step-cmd {
+  flex: 1;
+  background: var(--code-bg);
+  padding: 7px 12px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--green);
+  border: 1px solid var(--border);
+  word-break: break-all;
+  display: block;
+}
+
+.step-copy-btn {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+
+.step-copy-btn:hover {
+  color: var(--text-primary);
+  background: var(--border);
+}
+
+.step-copy-btn.copied {
+  color: var(--green);
+  border-color: var(--green-dim);
+}
+
+.step-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.step-note code {
+  background: var(--code-bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+/* ─── Status: lease-ended ─── */
+
+.status-badge.lease-ended {
+  background: var(--red-dim);
+  color: var(--red);
+}
+
+/* ─── Lease-ended banner (shown above input when session expires) ─── */
+
+.lease-ended-banner {
+  background: rgba(240, 136, 62, 0.12);
+  border-top: 1px solid var(--accent);
+  border-bottom: 1px solid var(--accent);
+  color: var(--accent);
+  text-align: center;
+  padding: 10px 20px;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+}
+
+.status-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  text-align: right;
+  padding: 0 20px 4px;
+}
+
+/* ─── Disabled input (lease ended) ─── */
+
+.input-area.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.connection-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
 /* ─── Responsive ─── */
 
 @media (max-width: 640px) {
