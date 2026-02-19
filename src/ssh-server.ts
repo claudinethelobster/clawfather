@@ -64,21 +64,37 @@ function openAgentChannel(client: Connection): Promise<NodeJS.ReadWriteStream> {
       return;
     }
 
+    const timeout = setTimeout(() => {
+      reject(new Error('auth-agent channel open timeout'));
+    }, 5000);
+
     const wrapper: any = (err: Error | undefined, stream: any) => {
+      clearTimeout(timeout);
       if (err) reject(err);
-      else resolve(stream);
+      else {
+        console.log('[clawdfather] auth-agent channel opened');
+        resolve(stream);
+      }
     };
     wrapper.type = 'auth-agent@openssh.com';
 
     const localChan = chanMgr.add(wrapper);
     if (localChan === -1) {
+      clearTimeout(timeout);
       reject(new Error('No free channels available'));
       return;
     }
 
     const MAX_WINDOW = 2 * 1024 * 1024;
     const PACKET_SIZE = 64 * 1024;
-    proto.openssh_authAgent(localChan, MAX_WINDOW, PACKET_SIZE);
+    console.log('[clawdfather] opening auth-agent channel');
+    try {
+      proto.openssh_authAgent(localChan, MAX_WINDOW, PACKET_SIZE);
+    } catch (err: any) {
+      clearTimeout(timeout);
+      try { chanMgr.remove(localChan); } catch {}
+      reject(err);
+    }
   });
 }
 
@@ -171,6 +187,7 @@ async function handleInput(
   if (agentForwardingAccepted) {
     try {
       agentServer = createNetServer((localSocket) => {
+        console.log('[clawdfather] local process connected to agent proxy socket');
         openAgentChannel(client).then((agentStream) => {
           localSocket.pipe(agentStream as any);
           (agentStream as any).pipe(localSocket);
