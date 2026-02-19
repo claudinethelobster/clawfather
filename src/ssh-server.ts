@@ -89,7 +89,7 @@ function establishControlMaster(
   targetPort: number,
   controlPath: string,
   agentSocketPath?: string
-): Promise<boolean> {
+): Promise<{ success: boolean; stderr: string }> {
   return new Promise((resolve) => {
     const args = [
       '-A',
@@ -114,25 +114,32 @@ function establishControlMaster(
     let stderr = '';
     proc.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
 
+    const done = (success: boolean) => {
+      if (!success && stderr) {
+        console.error(`[clawdfather] ControlMaster stderr: ${stderr.trim()}`);
+      }
+      resolve({ success, stderr: stderr.trim() });
+    };
+
     // Check if socket appears within 10s
     const timer = setTimeout(() => {
       if (existsSync(controlPath)) {
-        resolve(true);
+        done(true);
       } else {
         proc.kill();
-        resolve(false);
+        done(false);
       }
     }, 10_000);
 
     proc.on('close', () => {
       clearTimeout(timer);
-      resolve(existsSync(controlPath));
+      done(existsSync(controlPath));
     });
 
     proc.on('error', (err: Error) => {
       clearTimeout(timer);
       console.error(`[clawdfather] SSH spawn error: ${err.message}`);
-      resolve(false);
+      done(false);
     });
   });
 }
@@ -192,17 +199,39 @@ async function handleInput(
     }
   }
 
-  const success = await establishControlMaster(
+  let probeError = '';
+  if (agentForwardingAccepted) {
+    try {
+      execSync('ssh-add -l', {
+        env: { ...process.env, SSH_AUTH_SOCK: agentSocketPath },
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: 5_000,
+      });
+      console.log(`[clawdfather] Agent probe (ssh-add -l) succeeded via ${agentSocketPath}`);
+    } catch (err: any) {
+      const msg = (err.stderr ? err.stderr.toString().trim() : err.message) || 'unknown error';
+      probeError = msg;
+      console.error(`[clawdfather] Agent probe (ssh-add -l) failed: ${msg}`);
+    }
+  }
+
+  const cmResult = await establishControlMaster(
     dest.user, dest.host, dest.port, controlPath,
     agentForwardingAccepted ? agentSocketPath : undefined
   );
 
-  if (!success) {
+  if (!cmResult.success) {
     if (agentServer) {
       agentServer.close();
       try { unlinkSync(agentSocketPath); } catch {}
     }
     stream.write('\x1b[31m  ✗ Failed to connect. Check your credentials and agent forwarding.\x1b[0m\r\n');
+    if (probeError) {
+      stream.write(`\x1b[31m  ✗ Agent probe failed: ${probeError}\x1b[0m\r\n`);
+    }
+    if (cmResult.stderr) {
+      stream.write(`\x1b[90m  SSH error: ${cmResult.stderr}\x1b[0m\r\n`);
+    }
     stream.write('\x1b[90m  Make sure you connected with: ssh -A ...\x1b[0m\r\n\r\n');
     stream.write('\x1b[32m  ➜ \x1b[0m');
     return;
