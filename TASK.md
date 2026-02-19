@@ -1,41 +1,79 @@
-Implement strict SSH session lease semantics per review.
+Fix SSH agent forwarding bridge. Currently the spawned outbound `ssh` process has no access to the client's forwarded SSH agent.
 
-Required code changes:
+## The Problem
+When user does `ssh -A clawdfather.ai`, the ssh2 library accepts the connection but doesn't automatically make the forwarded agent available as a Unix socket. The spawned `ssh` command in `establishControlMaster()` needs `SSH_AUTH_SOCK` to point to the client's agent.
 
-1) src/ssh-server.ts
-- Remove auto-close timer that ends SSH session after 30s.
-- Remove any grace-period invalidation logic (60s after close).
-- Add immediate teardown function after session creation:
-  - endSessionNow(reason)
-  - idempotent via local `ended` boolean
-  - on end: sessionStore.remove(sessionId), log invalidation reason
-  - hook to client.once('close'|'end'|'error')
-- Update terminal copy to:
-  - Keep this SSH session open while using the web console.
-  - Press Ctrl+C to end this session and revoke web access.
-- Integrate with web server immediate disconnect helper (below).
+## The Fix
+In `src/ssh-server.ts`:
 
-2) src/web-server.ts
-- Add exported helper:
-  - closeSessionClients(sessionId, code=4001, reason='Session expired')
-  - closes all ws for that session and deletes map entry.
+### 1) Accept agent forwarding on the session
+The session handler already may have `session.on('auth-agent')` or similar. Make sure we accept it:
+```ts
+session.on('auth-agent', (accept) => { accept(); });
+```
 
-3) Integrate immediate UI revocation
-- In src/ssh-server.ts endSessionNow(), call closeSessionClients(sessionId, 4001, 'SSH session ended').
+### 2) Create an agent proxy Unix socket per connection
+Before calling `establishControlMaster`, create a local Unix domain socket that bridges to the client's forwarded agent:
 
-4) README.md
-- Remove all mentions of 60s grace period.
-- Clearly state:
-  - SSH connection is the authoritative lease.
-  - Keep SSH terminal open while using web UI.
-  - Ctrl+C / SSH disconnect immediately revokes web session.
+```ts
+import { createServer as createNetServer, Server as NetServer } from 'net';
+import { unlinkSync } from 'fs';
 
-5) Optional (skip unless tiny/easy):
-- SSH commands url/status/exit in shell loop.
-Only do if very low risk. Otherwise skip.
+const agentSocketPath = `/tmp/clawdfather-agent-${sessionId}`;
 
-After edits:
-- npx tsc --noEmit
-- git add -A
-- git commit -m "fix: make SSH connection the authoritative session lease"
-- git push
+const agentServer = createNetServer((localSocket) => {
+  // Open an auth-agent channel back to the client's agent
+  (client as any).openssh_agentForward((err: Error | undefined, agentStream: any) => {
+    if (err) {
+      localSocket.destroy();
+      return;
+    }
+    localSocket.pipe(agentStream);
+    agentStream.pipe(localSocket);
+    localSocket.on('close', () => agentStream.destroy());
+    agentStream.on('close', () => localSocket.destroy());
+  });
+});
+
+agentServer.listen(agentSocketPath);
+```
+
+Note: The ssh2 API for opening an agent channel from server side may be:
+- `client.openssh_agentForward(callback)` — check ssh2 docs
+- Or `(client as any).openChannel('auth-agent@openssh.com', callback)` 
+
+Read the ssh2 TypeScript types or source to find the correct method. The goal is to open a channel of type `auth-agent@openssh.com` back to the client.
+
+### 3) Pass SSH_AUTH_SOCK to the spawned ssh process
+In `establishControlMaster()`, accept an optional `agentSocketPath` parameter and set it in the env:
+
+```ts
+const proc = spawn('ssh', args, {
+  stdio: ['ignore', 'pipe', 'pipe'],
+  env: { ...process.env, SSH_AUTH_SOCK: agentSocketPath },
+});
+```
+
+### 4) Clean up the agent socket
+In `endSessionNow()`, clean up the agent socket:
+```ts
+agentServer.close();
+try { unlinkSync(agentSocketPath); } catch {}
+```
+
+### 5) Pass agentSocketPath through the call chain
+`handleInput` creates the sessionId and agentSocketPath, passes it to `establishControlMaster`.
+
+## Important notes
+- Check the ssh2 npm package docs/types for the correct API to open an agent channel from the server side
+- The `auth-agent` event on session MUST be accepted for forwarding to work
+- The agent proxy socket must be created BEFORE calling establishControlMaster
+- Clean up sockets on session end
+
+## After:
+```bash
+npx tsc --noEmit
+git add -A  
+git commit -m "fix: bridge SSH agent forwarding to spawned ControlMaster process"
+git push
+```

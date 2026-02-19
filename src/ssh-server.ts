@@ -1,7 +1,8 @@
 import { Server, Connection } from 'ssh2';
 import { createHash } from 'crypto';
-import { readFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, existsSync, mkdirSync, unlinkSync } from 'fs';
 import { execSync, spawn } from 'child_process';
+import { createServer as createNetServer, Server as NetServer } from 'net';
 import { join, dirname } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { sessionStore } from './sessions';
@@ -41,12 +42,44 @@ function parseDestination(input: string): { user: string; host: string; port: nu
   return { user: match[1], host: match[2], port: match[3] ? parseInt(match[3], 10) : 22 };
 }
 
+/**
+ * Open an auth-agent@openssh.com channel back to the SSH client.
+ * Uses ssh2 internals since the server Connection class doesn't expose this publicly.
+ */
+function openAgentChannel(client: Connection): Promise<NodeJS.ReadWriteStream> {
+  return new Promise((resolve, reject) => {
+    const proto = (client as any)._protocol;
+    const chanMgr = (client as any)._chanMgr;
+    if (!proto || !chanMgr) {
+      reject(new Error('Cannot access ssh2 internals for agent forwarding'));
+      return;
+    }
+
+    const wrapper: any = (err: Error | undefined, stream: any) => {
+      if (err) reject(err);
+      else resolve(stream);
+    };
+    wrapper.type = 'auth-agent@openssh.com';
+
+    const localChan = chanMgr.add(wrapper);
+    if (localChan === -1) {
+      reject(new Error('No free channels available'));
+      return;
+    }
+
+    const MAX_WINDOW = 2 * 1024 * 1024;
+    const PACKET_SIZE = 64 * 1024;
+    proto.openssh_authAgent(localChan, MAX_WINDOW, PACKET_SIZE);
+  });
+}
+
 /** Establish ControlMaster SSH connection to target */
 function establishControlMaster(
   targetUser: string,
   targetHost: string,
   targetPort: number,
-  controlPath: string
+  controlPath: string,
+  agentSocketPath?: string
 ): Promise<boolean> {
   return new Promise((resolve) => {
     const args = [
@@ -61,9 +94,12 @@ function establishControlMaster(
       `${targetUser}@${targetHost}`,
     ];
 
+    const env = { ...process.env };
+    if (agentSocketPath) env.SSH_AUTH_SOCK = agentSocketPath;
+
     const proc = spawn('ssh', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
+      env,
     });
 
     let stderr = '';
@@ -98,7 +134,8 @@ async function handleInput(
   input: string,
   client: Connection,
   config: ClawdfatherConfig,
-  keyFingerprint: string
+  keyFingerprint: string,
+  agentForwardingAccepted: boolean
 ): Promise<void> {
   const dest = parseDestination(input);
   if (!dest) {
@@ -111,10 +148,39 @@ async function handleInput(
 
   const sessionId = uuidv4();
   const controlPath = `/tmp/clawdfather-${sessionId}`;
+  const agentSocketPath = `/tmp/clawdfather-agent-${sessionId}`;
 
-  const success = await establishControlMaster(dest.user, dest.host, dest.port, controlPath);
+  let agentServer: NetServer | null = null;
+
+  if (agentForwardingAccepted) {
+    agentServer = createNetServer((localSocket) => {
+      openAgentChannel(client).then((agentStream) => {
+        localSocket.pipe(agentStream as any);
+        (agentStream as any).pipe(localSocket);
+        localSocket.on('close', () => (agentStream as any).destroy());
+        (agentStream as any).on('close', () => localSocket.destroy());
+      }).catch(() => {
+        localSocket.destroy();
+      });
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      agentServer!.on('error', reject);
+      agentServer!.listen(agentSocketPath, () => resolve());
+    });
+    console.log(`[clawdfather] Agent proxy socket listening at ${agentSocketPath}`);
+  }
+
+  const success = await establishControlMaster(
+    dest.user, dest.host, dest.port, controlPath,
+    agentForwardingAccepted ? agentSocketPath : undefined
+  );
 
   if (!success) {
+    if (agentServer) {
+      agentServer.close();
+      try { unlinkSync(agentSocketPath); } catch {}
+    }
     stream.write('\x1b[31m  ✗ Failed to connect. Check your credentials and agent forwarding.\x1b[0m\r\n');
     stream.write('\x1b[90m  Make sure you connected with: ssh -A ...\x1b[0m\r\n\r\n');
     stream.write('\x1b[32m  ➜ \x1b[0m');
@@ -153,6 +219,10 @@ async function handleInput(
     ended = true;
     sessionStore.remove(sessionId);
     closeSessionClients(sessionId, 4001, 'SSH session ended');
+    if (agentServer) {
+      agentServer.close();
+      try { unlinkSync(agentSocketPath); } catch {}
+    }
     console.log(`[clawdfather] Session ${sessionId} invalidated (${reason})`);
   }
 
@@ -192,6 +262,13 @@ export function startSSHServer(config: ClawdfatherConfig): Server {
 
       client.on('session', (accept) => {
         const session = accept();
+        let agentForwardingAccepted = false;
+
+        session.on('auth-agent', (accept) => {
+          accept();
+          agentForwardingAccepted = true;
+          console.log('[clawdfather] Agent forwarding accepted');
+        });
 
         session.on('pty', (accept) => { accept(); });
 
@@ -210,7 +287,7 @@ export function startSSHServer(config: ClawdfatherConfig): Server {
             for (const char of str) {
               if (char === '\r' || char === '\n') {
                 stream.write('\r\n');
-                handleInput(stream, inputBuffer, client, config, keyFingerprint);
+                handleInput(stream, inputBuffer, client, config, keyFingerprint, agentForwardingAccepted);
                 inputBuffer = '';
                 return;
               } else if (char === '\x7f' || char === '\b') {
