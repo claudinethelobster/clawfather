@@ -288,13 +288,16 @@ export function startSSHServer(config: ClawdfatherConfig): Server {
           const session = accept();
           let agentForwardingAccepted = false;
 
-          session.on('auth-agent', (accept) => {
+          session.on('auth-agent', (...args: any[]) => {
             try {
-              accept();
+              const maybeAccept = args[0];
+              if (typeof maybeAccept === 'function') {
+                maybeAccept();
+              }
               agentForwardingAccepted = true;
               console.log('[clawdfather] Agent forwarding accepted');
             } catch (err: any) {
-              console.error(`[clawdfather] Agent forwarding accept error: ${err.message}`);
+              console.error(`[clawdfather] Agent forwarding handler error: ${err.message}`);
             }
           });
 
