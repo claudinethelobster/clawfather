@@ -18,9 +18,12 @@
           <div class="header-subtitle">AI Server Admin · <span id="version-display"></span></div>
         </div>
       </div>
-      <div id="status-badge" class="status-badge disconnected">
-        <span class="status-dot"></span>
-        <span id="status-text">disconnected</span>
+      <div class="header-right">
+        <span id="connection-hint" class="connection-hint"></span>
+        <div id="status-badge" class="status-badge disconnected">
+          <span class="status-dot"></span>
+          <span id="status-text">disconnected</span>
+        </div>
       </div>
     </div>
 
@@ -34,8 +37,42 @@
     <div id="welcome" class="welcome">
       <div class="welcome-logo">🦞</div>
       <h2>Welcome to Clawdfather</h2>
-      <p>Connect to a server via SSH to start an AI-powered admin session. Run the following command with agent forwarding:</p>
-      <code>ssh -A clawdfather.ai</code>
+      <p>Connect via SSH to start an AI-powered admin session.</p>
+      <div class="welcome-steps">
+        <div class="welcome-step-block">
+          <div class="step-num">1</div>
+          <div class="step-content">
+            <div class="step-title">Check if your SSH key is already loaded</div>
+            <div class="step-cmd-row">
+              <code class="step-cmd">ssh-add -l</code>
+              <button class="step-copy-btn" data-cmd="ssh-add -l" title="Copy command">copy</button>
+            </div>
+            <div class="step-note">If you see a key fingerprint, skip to step 3.</div>
+          </div>
+        </div>
+        <div class="welcome-step-block">
+          <div class="step-num">2</div>
+          <div class="step-content">
+            <div class="step-title">Load your SSH key</div>
+            <div class="step-cmd-row">
+              <code class="step-cmd">ssh-add ~/.ssh/id_ed25519</code>
+              <button class="step-copy-btn" data-cmd="ssh-add ~/.ssh/id_ed25519" title="Copy command">copy</button>
+            </div>
+            <div class="step-note">Common key paths: <code>~/.ssh/id_ed25519</code> · <code>~/.ssh/id_rsa</code> · <code>~/.ssh/id_ecdsa</code></div>
+          </div>
+        </div>
+        <div class="welcome-step-block">
+          <div class="step-num">3</div>
+          <div class="step-content">
+            <div class="step-title">Connect with agent forwarding</div>
+            <div class="step-cmd-row">
+              <code class="step-cmd">ssh -A clawdfather.ai</code>
+              <button class="step-copy-btn" data-cmd="ssh -A clawdfather.ai" title="Copy command">copy</button>
+            </div>
+            <div class="step-note">The <code>-A</code> flag forwards your SSH agent — required so Clawdfather can authenticate to your target servers.</div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Messages (hidden until session active) -->
