@@ -60,8 +60,8 @@ export async function handleClawdfatherInbound(params: {
     agentId: route.agentId,
   });
 
-  // Build context payload
-  const ctxPayload = core.channel.context.buildContextPayload({
+  // Build context payload (avoid SDK-specific helper that may be unavailable in external plugins)
+  const ctxPayload = {
     SessionKey: route.sessionKey,
     Channel: CHANNEL_ID,
     To: `${CHANNEL_ID}:${peerId}`,
@@ -77,7 +77,7 @@ export async function handleClawdfatherInbound(params: {
     OriginatingChannel: CHANNEL_ID,
     OriginatingTo: `${CHANNEL_ID}:${peerId}`,
     Body: text,
-  });
+  } as any;
 
   // Record inbound session
   await core.channel.session.recordInboundSession({
