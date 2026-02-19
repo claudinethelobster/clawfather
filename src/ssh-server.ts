@@ -153,22 +153,34 @@ async function handleInput(
   let agentServer: NetServer | null = null;
 
   if (agentForwardingAccepted) {
-    agentServer = createNetServer((localSocket) => {
-      openAgentChannel(client).then((agentStream) => {
-        localSocket.pipe(agentStream as any);
-        (agentStream as any).pipe(localSocket);
-        localSocket.on('close', () => (agentStream as any).destroy());
-        (agentStream as any).on('close', () => localSocket.destroy());
-      }).catch(() => {
-        localSocket.destroy();
+    try {
+      agentServer = createNetServer((localSocket) => {
+        openAgentChannel(client).then((agentStream) => {
+          localSocket.pipe(agentStream as any);
+          (agentStream as any).pipe(localSocket);
+          localSocket.on('close', () => { try { (agentStream as any).destroy(); } catch {} });
+          (agentStream as any).on('close', () => { try { localSocket.destroy(); } catch {} });
+          localSocket.on('error', () => { try { (agentStream as any).destroy(); } catch {} });
+          (agentStream as any).on('error', () => { try { localSocket.destroy(); } catch {} });
+        }).catch((err) => {
+          console.error(`[clawdfather] Agent channel error: ${err.message}`);
+          localSocket.destroy();
+        });
       });
-    });
 
-    await new Promise<void>((resolve, reject) => {
-      agentServer!.on('error', reject);
-      agentServer!.listen(agentSocketPath, () => resolve());
-    });
-    console.log(`[clawdfather] Agent proxy socket listening at ${agentSocketPath}`);
+      await new Promise<void>((resolve, reject) => {
+        agentServer!.on('error', (err) => {
+          console.error(`[clawdfather] Agent socket server error: ${err.message}`);
+          reject(err);
+        });
+        agentServer!.listen(agentSocketPath, () => resolve());
+      });
+      console.log(`[clawdfather] Agent proxy socket listening at ${agentSocketPath}`);
+    } catch (err: any) {
+      console.error(`[clawdfather] Failed to set up agent forwarding: ${err.message}`);
+      // Continue without agent forwarding — will likely fail but won't crash
+      agentServer = null;
+    }
   }
 
   const success = await establishControlMaster(
@@ -241,73 +253,90 @@ export function startSSHServer(config: ClawdfatherConfig): Server {
 
     let keyFingerprint = '';
 
-    client.on('authentication', (ctx) => {
-      if (ctx.method === 'publickey') {
-        // Accept any valid public key — identity tracked by fingerprint
-        const fingerprint = createHash('sha256').update(ctx.key.data).digest('base64');
-        keyFingerprint = `SHA256:${fingerprint}`;
-        console.log(`[clawdfather] Public key auth from ${ctx.username}: ${keyFingerprint}`);
-        ctx.accept();
-      } else if (ctx.method === 'none') {
-        // Initial probe — tell client we only accept publickey
-        ctx.reject(['publickey']);
-      } else {
-        // Reject password and all other methods — publickey only
-        ctx.reject(['publickey']);
-      }
-    });
+    try {
+      client.on('authentication', (ctx) => {
+        try {
+          if (ctx.method === 'publickey') {
+            const fingerprint = createHash('sha256').update(ctx.key.data).digest('base64');
+            keyFingerprint = `SHA256:${fingerprint}`;
+            console.log(`[clawdfather] Public key auth from ${ctx.username}: ${keyFingerprint}`);
+            ctx.accept();
+          } else if (ctx.method === 'none') {
+            ctx.reject(['publickey']);
+          } else {
+            ctx.reject(['publickey']);
+          }
+        } catch (err: any) {
+          console.error(`[clawdfather] Auth handler error: ${err.message}`);
+          try { ctx.reject(); } catch {}
+        }
+      });
 
-    client.on('ready', () => {
-      console.log('[clawdfather] Client authenticated');
+      client.on('ready', () => {
+        console.log('[clawdfather] Client authenticated');
 
-      client.on('session', (accept) => {
-        const session = accept();
-        let agentForwardingAccepted = false;
+        client.on('session', (accept) => {
+          const session = accept();
+          let agentForwardingAccepted = false;
 
-        session.on('auth-agent', (accept) => {
-          accept();
-          agentForwardingAccepted = true;
-          console.log('[clawdfather] Agent forwarding accepted');
-        });
-
-        session.on('pty', (accept) => { accept(); });
-
-        session.on('shell', (accept) => {
-          const stream = accept();
-          stream.write(BANNER);
-          stream.write('\r\n');
-          stream.write('\x1b[36m  Where would you like to connect?\x1b[0m\r\n');
-          stream.write('\x1b[90m  Format: user@hostname[:port]\x1b[0m\r\n\r\n');
-          stream.write('\x1b[32m  ➜ \x1b[0m');
-
-          let inputBuffer = '';
-
-          stream.on('data', (data: Buffer) => {
-            const str = data.toString();
-            for (const char of str) {
-              if (char === '\r' || char === '\n') {
-                stream.write('\r\n');
-                handleInput(stream, inputBuffer, client, config, keyFingerprint, agentForwardingAccepted);
-                inputBuffer = '';
-                return;
-              } else if (char === '\x7f' || char === '\b') {
-                if (inputBuffer.length > 0) {
-                  inputBuffer = inputBuffer.slice(0, -1);
-                  stream.write('\b \b');
-                }
-              } else if (char === '\x03') {
-                stream.write('\r\n\x1b[33m  Goodbye!\x1b[0m\r\n');
-                stream.close();
-                return;
-              } else if (char.charCodeAt(0) >= 32) {
-                inputBuffer += char;
-                stream.write(char);
-              }
+          session.on('auth-agent', (accept) => {
+            try {
+              accept();
+              agentForwardingAccepted = true;
+              console.log('[clawdfather] Agent forwarding accepted');
+            } catch (err: any) {
+              console.error(`[clawdfather] Agent forwarding accept error: ${err.message}`);
             }
+          });
+
+          session.on('pty', (accept) => { accept(); });
+
+          session.on('shell', (accept) => {
+            const stream = accept();
+            stream.write(BANNER);
+            stream.write('\r\n');
+            stream.write('\x1b[36m  Where would you like to connect?\x1b[0m\r\n');
+            stream.write('\x1b[90m  Format: user@hostname[:port]\x1b[0m\r\n\r\n');
+            stream.write('\x1b[32m  ➜ \x1b[0m');
+
+            let inputBuffer = '';
+
+            stream.on('data', (data: Buffer) => {
+              const str = data.toString();
+              for (const char of str) {
+                if (char === '\r' || char === '\n') {
+                  stream.write('\r\n');
+                  handleInput(stream, inputBuffer, client, config, keyFingerprint, agentForwardingAccepted)
+                    .catch((err: any) => {
+                      console.error(`[clawdfather] handleInput error: ${err.message}`);
+                      try {
+                        stream.write(`\x1b[31m  ✗ Internal error: ${err.message}\x1b[0m\r\n`);
+                        stream.write('\x1b[32m  ➜ \x1b[0m');
+                      } catch {}
+                    });
+                  inputBuffer = '';
+                  return;
+                } else if (char === '\x7f' || char === '\b') {
+                  if (inputBuffer.length > 0) {
+                    inputBuffer = inputBuffer.slice(0, -1);
+                    stream.write('\b \b');
+                  }
+                } else if (char === '\x03') {
+                  stream.write('\r\n\x1b[33m  Goodbye!\x1b[0m\r\n');
+                  try { stream.close(); } catch {}
+                  return;
+                } else if (char.charCodeAt(0) >= 32) {
+                  inputBuffer += char;
+                  stream.write(char);
+                }
+              }
+            });
           });
         });
       });
-    });
+    } catch (err: any) {
+      console.error(`[clawdfather] Client setup error: ${err.message}`);
+    }
 
     client.on('error', (err: Error) => {
       console.error(`[clawdfather] Client error: ${err.message}`);
