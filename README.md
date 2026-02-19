@@ -37,49 +37,12 @@ Clawdfather lets you connect to any server via SSH and get an AI assistant that 
 
 ## Host Preparation
 
-Before installing Clawdfather, you need to free up **port 22** on the host. Clawdfather listens on port 22 so users can simply `ssh -A clawdfather.ai` — no `-p` flag needed. The host's standard sshd moves to port 2222 for admin access.
+Before installing Clawdfather, free up **port 22** on the host (Clawdfather owns port 22; host sshd moves to 2222).
 
-> ⚠️ **WARNING:** Follow these steps carefully. If you change sshd's port and can't connect on the new port, you will be locked out of your server. **Always test the new port before closing your current session.**
+- Full guide: [`docs/host-preparation.md`](docs/host-preparation.md)
+- Includes distro notes and gotchas (including Ubuntu `ssh.socket` behavior)
 
-**Step 1.** Edit `/etc/ssh/sshd_config`:
-
-```
-Port 2222
-```
-
-**Step 2.** If using SELinux, allow the new port:
-
-```bash
-semanage port -a -t ssh_port_t -p tcp 2222
-```
-
-**Step 3.** Update firewall to allow the new port:
-
-```bash
-# UFW
-ufw allow 2222/tcp
-ufw reload
-
-# Or firewalld
-firewall-cmd --permanent --add-port=2222/tcp
-firewall-cmd --reload
-```
-
-**Step 4.** Restart sshd:
-
-```bash
-systemctl restart sshd
-```
-
-**Step 5. 🚨 CRITICAL: Test the new sshd port BEFORE closing your current session:**
-
-```bash
-ssh -p 2222 user@clawdfather.ai
-```
-
-Open a **new terminal** and verify you can connect. Do NOT close your existing session until this works.
-
-**Step 6.** Once confirmed, port 22 is free for Clawdfather. Continue with installation below.
+> ⚠️ **Safety first:** Always test `ssh -p 2222 user@clawdfather.ai` from a new terminal before closing your current SSH session.
 
 ## Installation
 
