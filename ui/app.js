@@ -47,6 +47,12 @@
       }
     }
 
+    // Fetch version info
+    fetch("/api/version").then(function(r) { return r.json(); }).then(function(v) {
+      var el = document.getElementById("version-display");
+      if (el) el.textContent = "v" + v.version + " (" + v.commit + ")";
+    }).catch(function() {});
+
     if (!sessionId) {
       showWelcome();
       return;

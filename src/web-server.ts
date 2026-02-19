@@ -115,6 +115,19 @@ export function startWebServer(
 
     const url = req.url ?? "/";
 
+    // API: version
+    if (url === "/api/version") {
+      let commitHash = "unknown";
+      try {
+        const { execSync } = require("child_process");
+        commitHash = execSync("git rev-parse --short HEAD", { cwd: pluginRoot, stdio: ["pipe", "pipe", "pipe"] }).toString().trim();
+      } catch {}
+      res.setHeader("Content-Type", "application/json");
+      res.writeHead(200);
+      res.end(JSON.stringify({ version: "0.1.0", commit: commitHash }));
+      return;
+    }
+
     // API: session info
     if (url.startsWith("/api/session/")) {
       const sessionId = url.replace("/api/session/", "").split("?")[0];

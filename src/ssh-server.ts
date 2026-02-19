@@ -2,6 +2,13 @@ import { Server, Connection } from 'ssh2';
 import { createHash } from 'crypto';
 import { readFileSync, existsSync, mkdirSync, unlinkSync } from 'fs';
 import { execSync, spawn } from 'child_process';
+
+/** Get current git commit hash */
+function getCommitHash(): string {
+  try {
+    return execSync('git rev-parse --short HEAD', { cwd: __dirname, stdio: ['pipe', 'pipe', 'pipe'] }).toString().trim();
+  } catch { return 'unknown'; }
+}
 import { createServer as createNetServer, Server as NetServer } from 'net';
 import { join, dirname } from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -21,6 +28,8 @@ const BANNER = `\r
 \x1b[33m  Secure AI-Powered Server Administration\x1b[0m\r
 \x1b[90m  ─────────────────────────────────────────\x1b[0m\r
 `;
+
+const COMMIT_HASH = getCommitHash();
 
 /** Ensure SSH host key exists, generate if needed */
 function ensureHostKey(keyPath: string): Buffer {
@@ -294,7 +303,7 @@ export function startSSHServer(config: ClawdfatherConfig): Server {
           session.on('shell', (accept) => {
             const stream = accept();
             stream.write(BANNER);
-            stream.write('\r\n');
+            stream.write(`\x1b[90m  v0.1.0 (${COMMIT_HASH})\x1b[0m\r\n\r\n`);
             stream.write('\x1b[36m  Where would you like to connect?\x1b[0m\r\n');
             stream.write('\x1b[90m  Format: user@hostname[:port]\x1b[0m\r\n\r\n');
             stream.write('\x1b[32m  ➜ \x1b[0m');
