@@ -9,6 +9,7 @@
  * prefix for all server commands — no custom tools needed.
  */
 
+import { join } from "path";
 import { sessionStore } from "./sessions";
 import { startSSHServer } from "./ssh-server";
 import { setClawdfatherRuntime } from "./runtime";
@@ -39,11 +40,13 @@ export default function register(api: any) {
   api.registerChannel({ plugin: channelPlugin });
 
   // ── SSH Server background service ───────────────────────────────────
+  const dbPath = config.dbPath || join(PLUGIN_ROOT, "data", "clawdfather.db");
+
   api.registerService({
     id: "clawdfather-ssh",
     start: () => {
       sessionStore.start(config.sessionTimeoutMs);
-      sshServer = startSSHServer(config);
+      sshServer = startSSHServer(config, dbPath);
       api.logger.info("[clawdfather] SSH server service started");
     },
     stop: () => {

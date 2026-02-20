@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clawdfather — Account</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦞</text></svg>">
+  <style>
+    html, body { overflow: auto; }
+
+    #app {
+      height: auto;
+      min-height: 100vh;
+      padding-bottom: 40px;
+    }
+
+    .account-nav {
+      font-size: 13px;
+      font-family: var(--font-mono);
+    }
+
+    .account-nav a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      transition: color 0.15s;
+    }
+
+    .account-nav a:hover {
+      color: var(--accent);
+    }
+
+    .account-content {
+      padding: 24px 20px;
+      max-width: 640px;
+      margin: 0 auto;
+    }
+
+    .account-section {
+      margin-bottom: 32px;
+    }
+
+    .section-title {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--accent);
+      margin-bottom: 4px;
+    }
+
+    .section-divider {
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      margin-bottom: 12px;
+      user-select: none;
+    }
+
+    .balance-display {
+      font-family: var(--font-mono);
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--green);
+      margin-bottom: 6px;
+    }
+
+    .balance-display.empty {
+      color: var(--red);
+    }
+
+    .account-id {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .key-list {
+      list-style: none;
+      margin-bottom: 12px;
+    }
+
+    .key-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px 12px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      margin-bottom: 6px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }
+
+    .key-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .key-fingerprint {
+      color: var(--cyan);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .key-label {
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .btn-remove {
+      background: var(--red-dim);
+      border: 1px solid transparent;
+      color: var(--red);
+      padding: 4px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      white-space: nowrap;
+      transition: all 0.15s;
+      flex-shrink: 0;
+    }
+
+    .btn-remove:hover {
+      border-color: var(--red);
+    }
+
+    .confirm-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+    }
+
+    .btn-confirm-yes {
+      background: var(--red);
+      border: none;
+      color: #000;
+      padding: 3px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      font-weight: 600;
+    }
+
+    .btn-confirm-cancel {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      padding: 3px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      font-family: var(--font-mono);
+    }
+
+    .add-key-form {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .add-key-form input {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      padding: 8px 12px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .add-key-form input:focus {
+      border-color: var(--accent);
+    }
+
+    .add-key-form input::placeholder {
+      color: var(--text-muted);
+    }
+
+    .input-fingerprint { flex: 1; min-width: 200px; }
+    .input-label { width: 120px; }
+
+    .btn-add {
+      background: var(--accent);
+      border: none;
+      border-radius: 6px;
+      color: #000;
+      font-weight: 600;
+      font-size: 13px;
+      font-family: var(--font-mono);
+      padding: 8px 16px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: opacity 0.15s;
+    }
+
+    .btn-add:hover { opacity: 0.9; }
+    .btn-add:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .purchase-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .purchase-row select {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-size: 14px;
+      padding: 8px 12px;
+      outline: none;
+      appearance: none;
+      -webkit-appearance: none;
+      cursor: pointer;
+      min-width: 100px;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238b949e' viewBox='0 0 16 16'%3E%3Cpath d='M8 12L2 6h12z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      padding-right: 30px;
+    }
+
+    .purchase-row select:focus {
+      border-color: var(--accent);
+    }
+
+    .purchase-price {
+      font-family: var(--font-mono);
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--green);
+      min-width: 60px;
+    }
+
+    .btn-checkout {
+      background: var(--accent);
+      border: none;
+      border-radius: 6px;
+      color: #000;
+      font-weight: 600;
+      font-size: 14px;
+      font-family: var(--font-mono);
+      padding: 10px 20px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: opacity 0.15s;
+    }
+
+    .btn-checkout:hover { opacity: 0.9; }
+    .btn-checkout:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .loading {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 14px;
+    }
+
+    .loading .spinner {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 12px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .error-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--red);
+      font-family: var(--font-mono);
+      font-size: 14px;
+    }
+
+    .form-error {
+      color: var(--red);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      margin-top: 6px;
+    }
+
+    .empty-keys {
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-style: italic;
+      margin-bottom: 12px;
+    }
+
+    @media (max-width: 640px) {
+      .account-content { padding: 16px 14px; }
+      .key-item { flex-direction: column; align-items: flex-start; }
+      .purchase-row { flex-direction: column; align-items: stretch; }
+      .add-key-form { flex-direction: column; }
+      .input-label { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="header">
+      <div class="header-left">
+        <span class="logo">🦞</span>
+        <div>
+          <div class="header-title">CLAWDFATHER</div>
+          <div class="header-subtitle">Account Management</div>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="account-nav">
+          <a href="/" id="back-link">← Back to chat</a>
+        </div>
+      </div>
+    </div>
+
+    <div id="loading-state" class="loading">
+      <div class="spinner"></div>
+      <div>Loading account...</div>
+    </div>
+
+    <div id="error-state" class="error-state" style="display: none;"></div>
+
+    <div id="account-view" class="account-content" style="display: none;">
+
+      <div class="account-section">
+        <div class="section-title">Account</div>
+        <div class="section-divider">───────────────────────────────────────────────────</div>
+        <div id="balance-display" class="balance-display"></div>
+        <div id="account-id" class="account-id"></div>
+      </div>
+
+      <div class="account-section">
+        <div class="section-title">SSH Keys (<span id="key-count">0</span>)</div>
+        <div class="section-divider">───────────────────────────────────────────────────</div>
+        <ul id="key-list" class="key-list"></ul>
+        <div id="add-key-form-area">
+          <div class="add-key-form">
+            <input type="text" id="input-fingerprint" class="input-fingerprint" placeholder="SHA256:..." autocomplete="off" spellcheck="false">
+            <input type="text" id="input-label" class="input-label" placeholder="label (optional)" autocomplete="off" spellcheck="false">
+            <button id="btn-add-key" class="btn-add">+ Add Key</button>
+          </div>
+          <div id="add-key-error" class="form-error" style="display: none;"></div>
+        </div>
+      </div>
+
+      <div class="account-section">
+        <div class="section-title">Purchase Time</div>
+        <div class="section-divider">───────────────────────────────────────────────────</div>
+        <div class="purchase-row">
+          <select id="hour-select">
+            <option value="1">1 hr</option>
+            <option value="2">2 hr</option>
+            <option value="5">5 hr</option>
+            <option value="10">10 hr</option>
+            <option value="24">24 hr</option>
+          </select>
+          <span id="price-display" class="purchase-price">$1.00</span>
+          <button id="btn-checkout" class="btn-checkout">Buy via Stripe →</button>
+        </div>
+        <div id="checkout-error" class="form-error" style="display: none;"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="account.js"></script>
+</body>
+</html>

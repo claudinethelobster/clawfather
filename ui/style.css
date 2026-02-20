@@ -565,6 +565,22 @@ pre:hover .copy-btn {
   font-family: var(--font-mono);
 }
 
+.account-link {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  text-decoration: none;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  transition: all 0.15s;
+}
+
+.account-link:hover {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
 /* ─── Responsive ─── */
 
 @media (max-width: 640px) {

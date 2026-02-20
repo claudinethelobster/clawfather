@@ -20,10 +20,12 @@
   const $welcome = document.getElementById("welcome");
   const $inputArea = document.getElementById("input-area");
   const $connectionHint = document.getElementById("connection-hint");
+  const $accountLink = document.getElementById("account-link");
 
   // ── State ─────────────────────────────────────────────────────────
   let ws = null;
   let sessionId = null;
+  let accountToken = null;
   let serverTarget = null;
   let isThinking = false;
   let reconnectTimer = null;
@@ -60,23 +62,34 @@
     });
   }
 
+  // ── Account link ─────────────────────────────────────────────────
+  function enableAccountLink() {
+    if ($accountLink && accountToken) {
+      $accountLink.href = "account.html#account=" + accountToken;
+      $accountLink.style.display = "";
+    }
+  }
+
   // ── Init ──────────────────────────────────────────────────────────
   function init() {
     initWelcomeCopyButtons();
 
-    // Extract session from URL hash then immediately scrub it
+    // Extract session + account token from URL hash then immediately scrub it
     const hash = window.location.hash.slice(1);
     const params = new URLSearchParams(hash);
     sessionId = params.get("session");
+    accountToken = params.get("token") || params.get("account");
 
-    if (sessionId) {
-      // Remove the token from URL and browser history so it isn't leaked
-      // via Referer headers, browser history, or shoulder-surfing.
+    if (sessionId || accountToken) {
       if (window.history && window.history.replaceState) {
         window.history.replaceState(null, "", window.location.pathname + window.location.search);
       } else {
         window.location.hash = "";
       }
+    }
+
+    if (accountToken) {
+      enableAccountLink();
     }
 
     // Fetch version info
@@ -391,6 +404,13 @@
     var hash = window.location.hash.slice(1);
     var params = new URLSearchParams(hash);
     var newSession = params.get("session");
+    var newToken = params.get("token") || params.get("account");
+
+    if (newToken) {
+      accountToken = newToken;
+      enableAccountLink();
+    }
+
     if (newSession && newSession !== sessionId) {
       sessionId = newSession;
       bootstrapSent = false;
