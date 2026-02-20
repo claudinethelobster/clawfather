@@ -92,6 +92,12 @@ interface StmtCache {
   insertStripeEvent: Database.Statement;
   cleanExpiredTokens: Database.Statement;
   updateAccountTimestamp: Database.Statement;
+  insertAccountSession: Database.Statement;
+  findActiveAccountSession: Database.Statement;
+  updateSessionDebitTick: Database.Statement;
+  endAccountSession: Database.Statement;
+  listActiveAccountSessions: Database.Statement;
+  getTokensBySession: Database.Statement;
 }
 
 export class AccountStore {
@@ -193,6 +199,24 @@ export class AccountStore {
       ),
       updateAccountTimestamp: this.db.prepare(
         'UPDATE accounts SET updated_at = ? WHERE account_id = ?',
+      ),
+      insertAccountSession: this.db.prepare(
+        'INSERT INTO account_sessions (session_id, account_id, started_at, last_debit_at, ended_at) VALUES (?, ?, ?, ?, NULL)',
+      ),
+      findActiveAccountSession: this.db.prepare(
+        'SELECT account_id FROM account_sessions WHERE session_id = ? AND ended_at IS NULL',
+      ),
+      updateSessionDebitTick: this.db.prepare(
+        'UPDATE account_sessions SET last_debit_at = ? WHERE session_id = ? AND ended_at IS NULL',
+      ),
+      endAccountSession: this.db.prepare(
+        'UPDATE account_sessions SET ended_at = ? WHERE session_id = ? AND ended_at IS NULL',
+      ),
+      listActiveAccountSessions: this.db.prepare(
+        'SELECT session_id, account_id FROM account_sessions WHERE ended_at IS NULL',
+      ),
+      getTokensBySession: this.db.prepare(
+        'SELECT token_id, account_id, session_id, token, issued_at, expires_at, revoked_at, scope FROM account_tokens WHERE session_id = ? AND revoked_at IS NULL',
       ),
     };
   }
@@ -454,6 +478,61 @@ export class AccountStore {
 
   recordStripeEvent(eventId: string, type: string): void {
     this.stmts.insertStripeEvent.run(eventId, type, Date.now());
+  }
+
+  // ---------------------------------------------------------------------------
+  // Session tracking
+  // ---------------------------------------------------------------------------
+
+  startAccountSession(sessionId: string, accountId: string): void {
+    const now = Date.now();
+    this.stmts.insertAccountSession.run(sessionId, accountId, now, now);
+  }
+
+  getAccountIdForSession(sessionId: string): string | undefined {
+    const row = this.stmts.findActiveAccountSession.get(sessionId) as
+      | { account_id: string }
+      | undefined;
+    return row?.account_id;
+  }
+
+  recordSessionDebitTick(sessionId: string): void {
+    this.stmts.updateSessionDebitTick.run(Date.now(), sessionId);
+  }
+
+  endAccountSession(sessionId: string): void {
+    this.stmts.endAccountSession.run(Date.now(), sessionId);
+  }
+
+  getActiveAccountSessions(): Array<{ sessionId: string; accountId: string }> {
+    const rows = this.stmts.listActiveAccountSessions.all() as Array<{
+      session_id: string;
+      account_id: string;
+    }>;
+    return rows.map((r) => ({ sessionId: r.session_id, accountId: r.account_id }));
+  }
+
+  getTokensBySession(sessionId: string): AccountToken[] {
+    const rows = this.stmts.getTokensBySession.all(sessionId) as Array<{
+      token_id: string;
+      account_id: string;
+      session_id: string;
+      token: string;
+      issued_at: number;
+      expires_at: number;
+      revoked_at: number | null;
+      scope: string;
+    }>;
+    return rows.map((r) => ({
+      tokenId: r.token_id,
+      accountId: r.account_id,
+      sessionId: r.session_id,
+      token: r.token,
+      issuedAt: r.issued_at,
+      expiresAt: r.expires_at,
+      revokedAt: r.revoked_at,
+      scope: r.scope,
+    }));
   }
 
   // ---------------------------------------------------------------------------

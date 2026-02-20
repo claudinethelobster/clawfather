@@ -224,6 +224,58 @@ describe('stripe event idempotency', () => {
 });
 
 // ---------------------------------------------------------------------------
+// getActiveAccountSessions + getTokensBySession
+// ---------------------------------------------------------------------------
+
+describe('getActiveAccountSessions', () => {
+  it('returns all sessions with ended_at IS NULL', () => {
+    const { account } = store.resolveOrCreateAccount(TEST_FINGERPRINT);
+    store.startAccountSession('sess-active-1', account.accountId);
+    store.startAccountSession('sess-active-2', account.accountId);
+    store.startAccountSession('sess-ended', account.accountId);
+    store.endAccountSession('sess-ended');
+
+    const active = store.getActiveAccountSessions();
+    const ids = active.map((s) => s.sessionId).sort();
+    assert.deepEqual(ids, ['sess-active-1', 'sess-active-2']);
+    assert.equal(active.every((s) => s.accountId === account.accountId), true);
+  });
+
+  it('returns empty array when no active sessions exist', () => {
+    const active = store.getActiveAccountSessions();
+    assert.equal(active.length, 0);
+  });
+});
+
+describe('getTokensBySession', () => {
+  it('returns non-revoked tokens for a session', () => {
+    const { account } = store.resolveOrCreateAccount(TEST_FINGERPRINT);
+    const tok1 = store.issueToken(account.accountId, 'sess-tok-1');
+    const tok2 = store.issueToken(account.accountId, 'sess-tok-1');
+    store.issueToken(account.accountId, 'sess-tok-2');
+
+    const tokens = store.getTokensBySession('sess-tok-1');
+    assert.equal(tokens.length, 2);
+    const tokenIds = tokens.map((t) => t.tokenId).sort();
+    assert.deepEqual(tokenIds, [tok1.tokenId, tok2.tokenId].sort());
+  });
+
+  it('excludes revoked tokens', () => {
+    const { account } = store.resolveOrCreateAccount(TEST_FINGERPRINT);
+    const tok = store.issueToken(account.accountId, 'sess-tok-rev');
+    store.revokeToken(tok.tokenId);
+
+    const tokens = store.getTokensBySession('sess-tok-rev');
+    assert.equal(tokens.length, 0);
+  });
+
+  it('returns empty array for unknown session', () => {
+    const tokens = store.getTokensBySession('nonexistent');
+    assert.equal(tokens.length, 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Housekeeping
 // ---------------------------------------------------------------------------
 
