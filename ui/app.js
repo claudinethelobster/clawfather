@@ -415,6 +415,7 @@
       showChat();
       $sessionDisplay.textContent = sessionId.slice(0, 8) + "...";
       addSystemMessage("Connecting to new session...");
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
       connect();
     }
   });
