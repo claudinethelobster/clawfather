@@ -7,6 +7,11 @@ author: clawdfather
 
 # OpenClaw VPS Troubleshoot — Clawdfather Playbook
 
+> **Precondition:** An active persistent VPS SSH session must exist.
+> Load `openclaw-vps-session` first. Commands shown are direct VPS shell commands — not ssh-wrapped.
+> If you cannot establish a session, that itself is the problem to diagnose first.
+> See `openclaw-vps-session` for session lifecycle (start/verify/reconnect/reset).
+
 Diagnosis-first, fix-second. Always collect diagnostics before applying fixes.
 
 ## Security Defaults
@@ -25,7 +30,8 @@ Verify these are intact during any troubleshooting:
 ## Triage
 
 ```bash
-bash scripts/vps-triage.sh openclaw@HOST
+# From local machine, using ControlMaster session
+bash scripts/vps-triage.sh openclaw@VPS_HOST
 ```
 
 Read the output and match to a symptom class:
@@ -46,7 +52,11 @@ Read the output and match to a symptom class:
 
 ## [SC-1] Service Won't Start (Native)
 
-Check logs: `ssh openclaw@HOST "journalctl --user -u openclaw-gateway -n 50 --no-pager"`
+Check logs (on VPS as openclaw user):
+
+```bash
+journalctl --user -u openclaw-gateway -n 50 --no-pager
+```
 
 | Finding | Fix |
 |---------|-----|
@@ -78,7 +88,8 @@ Service active but `ss -tlnp | grep 18789` shows nothing.
 Port open but health fails.
 
 ```bash
-ssh openclaw@HOST "curl -v http://127.0.0.1:18789/health 2>&1 | tail -10"
+# On VPS as openclaw user:
+curl -v http://127.0.0.1:18789/health 2>&1 | tail -10
 ```
 
 - `401 Unauthorized` → token mismatch; verify GATEWAY_TOKEN
@@ -90,7 +101,8 @@ ssh openclaw@HOST "curl -v http://127.0.0.1:18789/health 2>&1 | tail -10"
 ## [SC-4] Docker Container Issues
 
 ```bash
-ssh openclaw@HOST "docker compose -f ~/openclaw/docker-compose.yml ps && docker compose -f ~/openclaw/docker-compose.yml logs --tail=50"
+# On VPS as openclaw user:
+docker compose -f ~/openclaw/docker-compose.yml ps && docker compose -f ~/openclaw/docker-compose.yml logs --tail=50
 ```
 
 | Container State | Diagnosis | Fix |
@@ -107,7 +119,8 @@ Volume permission fix: `chown -R 1000:1000 /home/openclaw/.openclaw`
 ## [SC-5] Disk Space
 
 ```bash
-ssh openclaw@HOST "df -h / && du -sh /var/log/* 2>/dev/null | sort -hr | head -5"
+# On VPS as openclaw user:
+df -h / && du -sh /var/log/* 2>/dev/null | sort -hr | head -5
 ```
 
 Cleanup (safe order): `apt-get clean` → `journalctl --vacuum-time=7d` → prune old sessions → `docker system prune -f`
@@ -117,7 +130,8 @@ Cleanup (safe order): `apt-get clean` → `journalctl --vacuum-time=7d` → prun
 ## [SC-6] Memory Pressure
 
 ```bash
-ssh openclaw@HOST "free -h && ps aux --sort=-%mem | head -10"
+# On VPS as openclaw user:
+free -h && ps aux --sort=-%mem | head -10
 ```
 
 - OpenClaw >500MB → restart gateway to reclaim
@@ -130,11 +144,10 @@ ssh openclaw@HOST "free -h && ps aux --sort=-%mem | head -10"
 Check channel config and recent errors:
 
 ```bash
-ssh openclaw@HOST '
-  export PATH=$(npm prefix -g)/bin:$PATH
-  openclaw status --all 2>/dev/null | grep -A 20 channels
-  journalctl --user -u openclaw-gateway -n 100 --no-pager 2>/dev/null | grep -i "telegram\|discord\|channel" | tail -10
-'
+# On VPS as openclaw user:
+export PATH=$(npm prefix -g)/bin:$PATH
+openclaw status --all 2>/dev/null | grep -A 20 channels
+journalctl --user -u openclaw-gateway -n 100 --no-pager 2>/dev/null | grep -i "telegram\|discord\|channel" | tail -10
 ```
 
 - Token invalid → `openclaw config set channels.telegram.botToken 'NEW_TOKEN'`
@@ -146,7 +159,8 @@ ssh openclaw@HOST '
 ## [SC-8] Permission Problems
 
 ```bash
-ssh openclaw@HOST "ls -la ~/.openclaw/ && stat -c '%U:%G %a %n' ~/.openclaw ~/.openclaw/openclaw.json"
+# On VPS as openclaw user:
+ls -la ~/.openclaw/ && stat -c '%U:%G %a %n' ~/.openclaw ~/.openclaw/openclaw.json
 ```
 
 Fix: `chmod 700 ~/.openclaw && chmod 600 ~/.openclaw/openclaw.json && chown -R openclaw:openclaw ~/.openclaw`
@@ -156,7 +170,8 @@ Fix: `chmod 700 ~/.openclaw && chmod 600 ~/.openclaw/openclaw.json && chown -R o
 ## [SC-9] Config / Logic Issues
 
 ```bash
-ssh openclaw@HOST 'export PATH=$(npm prefix -g)/bin:$PATH && openclaw doctor'
+# On VPS as openclaw user:
+export PATH=$(npm prefix -g)/bin:$PATH && openclaw doctor
 ```
 
 Common config fixes:
@@ -175,7 +190,8 @@ openclaw gateway restart
 Collect a full diagnostic bundle for support:
 
 ```bash
-bash scripts/vps-diagnostics.sh openclaw@HOST
+# From local machine, using ControlMaster session
+bash scripts/vps-diagnostics.sh openclaw@VPS_HOST
 ```
 
 Sensitive values are automatically redacted. Submit output to:
@@ -187,10 +203,9 @@ Sensitive values are automatically redacted. Submit output to:
 ## Post-Fix Verification
 
 ```bash
-ssh openclaw@HOST '
-  echo -n "Service: "; systemctl --user is-active openclaw-gateway 2>/dev/null || docker inspect openclaw-gateway --format "{{.State.Status}}" 2>/dev/null || echo UNKNOWN
-  echo -n "Health: "; curl -sf -H "Authorization: Bearer TOKEN" http://127.0.0.1:18789/health >/dev/null && echo OK || echo FAIL
-  echo -n "Port: "; ss -tlnp | grep 18789 | grep -q "127.0.0.1" && echo LOOPBACK || echo CHECK
-  echo -n "Config: "; python3 -m json.tool ~/.openclaw/openclaw.json >/dev/null && echo VALID || echo INVALID
-'
+# On VPS as openclaw user:
+echo -n "Service: "; systemctl --user is-active openclaw-gateway 2>/dev/null || docker inspect openclaw-gateway --format "{{.State.Status}}" 2>/dev/null || echo UNKNOWN
+echo -n "Health: "; curl -sf -H "Authorization: Bearer TOKEN" http://127.0.0.1:18789/health >/dev/null && echo OK || echo FAIL
+echo -n "Port: "; ss -tlnp | grep 18789 | grep -q "127.0.0.1" && echo LOOPBACK || echo CHECK
+echo -n "Config: "; python3 -m json.tool ~/.openclaw/openclaw.json >/dev/null && echo VALID || echo INVALID
 ```

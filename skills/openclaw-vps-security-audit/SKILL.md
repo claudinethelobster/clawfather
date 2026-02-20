@@ -7,6 +7,10 @@ author: clawdfather
 
 # OpenClaw VPS Security Audit — Clawdfather Playbook
 
+> **Precondition:** An active persistent VPS SSH session must exist.
+> Load `openclaw-vps-session` first. All commands execute in the context of the open VPS shell session.
+> See `openclaw-vps-session` for session lifecycle management (start, verify, reconnect, shutdown).
+
 Read-only audit first, then targeted hardening. Collect all findings before applying any fixes.
 
 ## Security Defaults
@@ -39,10 +43,11 @@ Every OpenClaw VPS must meet these baselines:
 ## Run Audit
 
 ```bash
-bash scripts/vps-security-audit.sh root@HOST openclaw@HOST
+# From local machine, using ControlMaster session
+bash scripts/vps-security-audit.sh VPS_HOST
 ```
 
-Prints PASS/CRITICAL/HIGH/MEDIUM for each check with a summary at the end.
+Prints PASS/CRITICAL/HIGH/MEDIUM for each check with a summary at the end. The script uses the ControlMaster socket internally.
 
 ---
 
@@ -106,7 +111,8 @@ Prints PASS/CRITICAL/HIGH/MEDIUM for each check with a summary at the end.
 ## Apply Hardening
 
 ```bash
-bash scripts/vps-hardening.sh root@HOST openclaw@HOST
+# From local machine, using ControlMaster session
+bash scripts/vps-hardening.sh VPS_HOST
 ```
 
 Applies: UFW, fail2ban, file permissions, loopback bind, mDNS off, dmScope, elevated tools, SSH hardening (with prominent warning), systemd hardening directives.
@@ -120,28 +126,19 @@ Applies: UFW, fail2ban, file permissions, loopback bind, mDNS off, dmScope, elev
 For individual findings, apply directly:
 
 ```bash
-# Rebind gateway to loopback
+# Execute on VPS as openclaw user (session must be active)
 openclaw config set gateway.bind loopback
-
-# Disable mDNS
 openclaw config set discovery.mdns.mode off
-
-# Set DM scope
 openclaw config set session.dmScope per-channel-peer
-
-# Disable elevated tools
 openclaw config set tools.elevated.enabled false
-
-# Set exec security
 openclaw config set tools.exec.security ask
-
-# Restart to apply
 openclaw gateway restart
 ```
 
 Fix file permissions:
 
 ```bash
+# Execute on VPS as openclaw user
 chmod 700 ~/.openclaw && chmod 600 ~/.openclaw/openclaw.json
 chown -R openclaw:openclaw ~/.openclaw
 ```
@@ -173,14 +170,16 @@ chown -R openclaw:openclaw ~/.openclaw
 ## Quick Hardening Checklist
 
 ```bash
-# Run on root@HOST
+# On VPS as root:
 ufw default deny incoming && ufw allow ssh && echo 'y' | ufw enable
 systemctl enable fail2ban && systemctl start fail2ban
 chmod 700 /home/openclaw/.openclaw
 chmod 600 /home/openclaw/.openclaw/openclaw.json
 chown -R openclaw:openclaw /home/openclaw/.openclaw
+```
 
-# Run on openclaw@HOST
+```bash
+# On VPS as openclaw user:
 openclaw config set gateway.bind loopback
 openclaw config set discovery.mdns.mode off
 openclaw config set session.dmScope per-channel-peer

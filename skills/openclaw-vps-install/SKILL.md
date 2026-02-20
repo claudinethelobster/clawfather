@@ -7,6 +7,10 @@ author: clawdfather
 
 # OpenClaw VPS Install — Clawdfather Playbook
 
+> **Precondition:** An active persistent VPS SSH session must exist.
+> Load `openclaw-vps-session` first and verify the session is active before running any phase.
+> All commands below execute via the established ControlMaster session — no ad-hoc ssh wrappers.
+
 Step-by-step executable playbook. Each phase contains a script or inline command block. Execute phases in order.
 
 ## Security Defaults
@@ -44,11 +48,14 @@ All installs enforce these from the start:
 
 ## Phase 0: Connectivity Check
 
+Pre-session validation only — run this **before** establishing the persistent session:
+
 ```bash
-ssh -o ConnectTimeout=10 root@HOST "echo CONNECTED && uname -a && id"
+# Pre-session connectivity check (run this BEFORE establishing persistent session)
+ssh -o ConnectTimeout=10 root@VPS_HOST "echo CONNECTED && uname -a && id"
 ```
 
-- `CONNECTED` → proceed
+- `CONNECTED` → proceed to establish persistent session via `openclaw-vps-session`
 - `Connection refused` → check IP / VPS status
 - `Permission denied (publickey)` → verify SSH key
 - `Connection timed out` → open port 22 in cloud security group
@@ -58,7 +65,8 @@ ssh -o ConnectTimeout=10 root@HOST "echo CONNECTED && uname -a && id"
 ## Phase 1: Prepare System
 
 ```bash
-bash scripts/vps-install-prep.sh root@HOST
+# Run from local machine, using established ControlMaster session
+bash scripts/vps-install-prep.sh openclaw@VPS_HOST
 ```
 
 Updates packages, installs curl/git/ca-certificates/ufw/fail2ban, creates `openclaw` user, copies SSH keys, configures passwordless sudo for service management.
@@ -68,16 +76,15 @@ Updates packages, installs curl/git/ca-certificates/ufw/fail2ban, creates `openc
 ## Phase 2: Install Node.js 22
 
 ```bash
-ssh root@HOST '
-  node_ver=$(node --version 2>/dev/null | cut -c2- | cut -d. -f1)
-  if [ "${node_ver:-0}" -ge 22 ]; then
-    echo "NODEJS_OK_ALREADY"
-  else
-    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-    apt-get install -y nodejs
-  fi
-  node --version && npm --version
-'
+# Execute on VPS (via session: ssh -S /tmp/clawdfather-vps-openclaw@VPS_HOST root@VPS_HOST)
+node_ver=$(node --version 2>/dev/null | cut -c2- | cut -d. -f1)
+if [ "${node_ver:-0}" -ge 22 ]; then
+  echo "NODEJS_OK_ALREADY"
+else
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  apt-get install -y nodejs
+fi
+node --version && npm --version
 ```
 
 ---
@@ -85,7 +92,8 @@ ssh root@HOST '
 ## Phase 3A: Native Install
 
 ```bash
-bash scripts/vps-install-native.sh openclaw@HOST [TOKEN]
+# Run from local machine, using established ControlMaster session
+bash scripts/vps-install-native.sh openclaw@VPS_HOST [TOKEN]
 ```
 
 - Token auto-generated if omitted — **save the printed token**
@@ -97,7 +105,8 @@ bash scripts/vps-install-native.sh openclaw@HOST [TOKEN]
 ## Phase 3B: Docker Install
 
 ```bash
-bash scripts/vps-install-docker.sh root@HOST openclaw@HOST [TOKEN]
+# Run from local machine, using established ControlMaster session
+bash scripts/vps-install-docker.sh root@VPS_HOST openclaw@VPS_HOST [TOKEN]
 ```
 
 - Installs Docker, clones repo, writes `.env`, builds image, creates systemd wrapper
@@ -108,7 +117,8 @@ bash scripts/vps-install-docker.sh root@HOST openclaw@HOST [TOKEN]
 ## Phase 4: Firewall
 
 ```bash
-bash scripts/vps-firewall.sh root@HOST
+# Run from local machine, using established ControlMaster session
+bash scripts/vps-firewall.sh root@VPS_HOST
 ```
 
 Configures UFW (deny all, allow SSH only) and enables fail2ban. Port 18789 is NOT opened — access only via SSH tunnel.
@@ -118,7 +128,8 @@ Configures UFW (deny all, allow SSH only) and enables fail2ban. Port 18789 is NO
 ## Phase 5: Validate
 
 ```bash
-bash scripts/vps-health-check.sh openclaw@HOST TOKEN
+# Run from local machine, using established ControlMaster session
+bash scripts/vps-health-check.sh openclaw@VPS_HOST TOKEN
 ```
 
 Checks: service running, `/health` endpoint, port 18789 loopback-only, file permissions (700/.openclaw, 600/openclaw.json), `openclaw doctor`.
@@ -130,7 +141,8 @@ Checks: service running, `/health` endpoint, port 18789 loopback-only, file perm
 The gateway binds to loopback — access via SSH tunnel:
 
 ```bash
-ssh -N -L 18789:127.0.0.1:18789 openclaw@HOST
+# Run from local machine, using established ControlMaster session
+ssh -S /tmp/clawdfather-vps-openclaw@VPS_HOST -N -L 18789:127.0.0.1:18789 openclaw@VPS_HOST
 # Then open: http://127.0.0.1:18789/
 ```
 
@@ -153,7 +165,7 @@ ssh -N -L 18789:127.0.0.1:18789 openclaw@HOST
         <string>ExitOnForwardFailure=yes</string>
         <string>-L</string>
         <string>18789:127.0.0.1:18789</string>
-        <string>openclaw@HOST</string>
+        <string>openclaw@VPS_HOST</string>
     </array>
     <key>KeepAlive</key>
     <true/>
@@ -168,13 +180,12 @@ ssh -N -L 18789:127.0.0.1:18789 openclaw@HOST
 ## Channel Setup
 
 ```bash
-ssh openclaw@HOST '
-  export PATH=$(npm prefix -g)/bin:$PATH
-  openclaw config set channels.telegram.enabled true
-  openclaw config set channels.telegram.botToken "BOT_TOKEN"
-  openclaw config set channels.telegram.dmPolicy pairing
-  openclaw gateway restart
-'
+# Execute on VPS as openclaw user (via active session):
+export PATH=$(npm prefix -g)/bin:$PATH
+openclaw config set channels.telegram.enabled true
+openclaw config set channels.telegram.botToken "BOT_TOKEN"
+openclaw config set channels.telegram.dmPolicy pairing
+openclaw gateway restart
 ```
 
 ---
