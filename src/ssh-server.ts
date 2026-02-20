@@ -15,6 +15,36 @@ import { v4 as uuidv4 } from 'uuid';
 import { sessionStore } from './sessions';
 import { closeSessionClients } from './web-server';
 import { ClawdfatherConfig, Session } from './types';
+import { AccountStore } from './account-store';
+import { CreditManager } from './credit-manager';
+
+// ---------------------------------------------------------------------------
+// Singleton account store & credit manager
+// ---------------------------------------------------------------------------
+
+let _accountStore: AccountStore | null = null;
+let _creditManager: CreditManager | null = null;
+
+export function initAccountStore(dbPath: string): AccountStore {
+  if (!_accountStore) {
+    _accountStore = AccountStore.open(dbPath);
+    _creditManager = new CreditManager(_accountStore);
+  }
+  return _accountStore;
+}
+
+export function getAccountStore(): AccountStore {
+  if (!_accountStore) throw new Error('AccountStore not initialized');
+  return _accountStore;
+}
+
+export function startCreditManager(): void {
+  _creditManager?.start();
+}
+
+export function stopCreditManager(): void {
+  _creditManager?.stop();
+}
 
 /** ASCII art banner */
 const BANNER = `\r
@@ -201,7 +231,8 @@ async function handleInput(
   client: Connection,
   config: ClawdfatherConfig,
   keyFingerprint: string,
-  agentForwardingAccepted: boolean
+  agentForwardingAccepted: boolean,
+  accountId: string,
 ): Promise<void> {
   const dest = parseDestination(input);
   if (!dest) {
@@ -300,8 +331,12 @@ async function handleInput(
   };
   sessionStore.create(session);
 
+  const store = getAccountStore();
+  store.startAccountSession(sessionId, accountId);
+  const accountToken = store.issueToken(accountId, sessionId, config.tokenTtlMs);
+
   const protocol = config.webDomain === 'localhost' ? 'http' : 'https';
-  const url = `${protocol}://${config.webDomain}/#session=${sessionId}`;
+  const url = `${protocol}://${config.webDomain}/#session=${sessionId}&token=${accountToken.token}`;
 
   stream.write('\r\n');
   stream.write('\x1b[32m  ✓ Connected successfully!\x1b[0m\r\n\r\n');
@@ -318,6 +353,11 @@ async function handleInput(
   function endSessionNow(reason: string): void {
     if (ended) return;
     ended = true;
+    try {
+      const s = getAccountStore();
+      s.endAccountSession(sessionId);
+      s.revokeTokensBySession(sessionId);
+    } catch {}
     sessionStore.remove(sessionId);
     closeSessionClients(sessionId, 4001, 'SSH session ended');
     if (agentServer) {
@@ -333,7 +373,10 @@ async function handleInput(
 }
 
 /** Start the Clawdfather SSH server */
-export function startSSHServer(config: ClawdfatherConfig): Server {
+export function startSSHServer(config: ClawdfatherConfig, dbPath?: string): Server {
+  initAccountStore(dbPath || join(__dirname, '..', 'data', 'clawdfather.db'));
+  startCreditManager();
+
   const keyPath = config.hostKeyPath || join(__dirname, '..', 'keys', 'host_ed25519');
   const hostKey = ensureHostKey(keyPath);
 
@@ -341,6 +384,8 @@ export function startSSHServer(config: ClawdfatherConfig): Server {
     console.log('[clawdfather] Client connected');
 
     let keyFingerprint = '';
+    let accountId = '';
+    let isNewAccount = false;
 
     try {
       client.on('authentication', (ctx) => {
@@ -349,6 +394,11 @@ export function startSSHServer(config: ClawdfatherConfig): Server {
             const fingerprint = createHash('sha256').update(ctx.key.data).digest('base64');
             keyFingerprint = `SHA256:${fingerprint}`;
             console.log(`[clawdfather] Public key auth from ${ctx.username}: ${keyFingerprint}`);
+
+            const { account, isNew } = getAccountStore().resolveOrCreateAccount(keyFingerprint);
+            accountId = account.accountId;
+            isNewAccount = isNew;
+
             ctx.accept();
           } else if (ctx.method === 'none') {
             ctx.reject(['publickey']);
@@ -387,6 +437,28 @@ export function startSSHServer(config: ClawdfatherConfig): Server {
             const stream = accept();
             stream.write(BANNER);
             stream.write(`\x1b[90m  v0.1.0 (${COMMIT_HASH})\x1b[0m\r\n\r\n`);
+
+            const fpShort = keyFingerprint.length > 20
+              ? keyFingerprint.slice(0, 20) + '...'
+              : keyFingerprint;
+
+            if (isNewAccount) {
+              stream.write(`\x1b[33m  Welcome, new account created\x1b[0m\r\n`);
+            } else {
+              stream.write(`\x1b[33m  Welcome back, ${fpShort}\x1b[0m\r\n`);
+            }
+
+            const balance = getAccountStore().getBalance(accountId);
+            const balHours = Math.floor(balance / 3600);
+            const balMinutes = Math.floor((balance % 3600) / 60);
+            stream.write(`\x1b[90m  Balance: ${balHours}h ${balMinutes}m\x1b[0m\r\n\r\n`);
+
+            if (balance <= 0) {
+              const protocol = config.webDomain === 'localhost' ? 'http' : 'https';
+              stream.write('\x1b[31m  You have no credits remaining.\x1b[0m\r\n');
+              stream.write(`\x1b[90m  Purchase time at: ${protocol}://${config.webDomain}/\x1b[0m\r\n\r\n`);
+            }
+
             stream.write('\x1b[36m  Where would you like to connect?\x1b[0m\r\n');
             stream.write('\x1b[90m  Format: user@hostname[:port]\x1b[0m\r\n');
             stream.write('\x1b[90m  Tip: ensure your key is loaded first — ssh-add <key>\x1b[0m\r\n\r\n');
@@ -399,7 +471,7 @@ export function startSSHServer(config: ClawdfatherConfig): Server {
               for (const char of str) {
                 if (char === '\r' || char === '\n') {
                   stream.write('\r\n');
-                  handleInput(stream, inputBuffer, client, config, keyFingerprint, agentForwardingAccepted)
+                  handleInput(stream, inputBuffer, client, config, keyFingerprint, agentForwardingAccepted, accountId)
                     .catch((err: any) => {
                       console.error(`[clawdfather] handleInput error: ${err.message}`);
                       try {
@@ -446,6 +518,13 @@ export function startSSHServer(config: ClawdfatherConfig): Server {
 
   server.on('error', (err: Error) => {
     console.error(`[clawdfather] Server error: ${err.message}`);
+  });
+
+  server.on('close', () => {
+    stopCreditManager();
+    try { _accountStore?.close(); } catch {}
+    _accountStore = null;
+    _creditManager = null;
   });
 
   return server;
