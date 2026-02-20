@@ -3,7 +3,9 @@ import { readFileSync, existsSync } from "fs";
 import { join, extname } from "path";
 import { WebSocketServer, WebSocket } from "ws";
 import { sessionStore } from "./sessions";
-import type { ClawdfatherConfig } from "./types";
+import type { ClawdfatherConfig, Account, AccountToken } from "./types";
+import type { AccountStore } from "./account-store";
+import { StripePayments } from "./stripe-payments";
 
 const MIME: Record<string, string> = {
   ".html": "text/html",
@@ -73,10 +75,58 @@ function resolveAllowedOrigin(reqOrigin: string | undefined, config: Clawdfather
  * Get or create the singleton Clawdfather web server (HTTP + WebSocket).
  * Returns an object with a release() method for reference-counted shutdown.
  */
+let _stripePayments: StripePayments | null = null;
+function getStripePayments(config: ClawdfatherConfig, store: AccountStore): StripePayments {
+  if (!_stripePayments) {
+    _stripePayments = new StripePayments(store, config);
+  }
+  return _stripePayments;
+}
+
+function getAuthenticatedAccount(
+  req: IncomingMessage,
+  store: AccountStore,
+): { account: Account; tokenRecord: AccountToken } | null {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) return null;
+  const token = authHeader.slice(7).trim();
+  if (!token) return null;
+  return store.getAccountByToken(token) ?? null;
+}
+
+function readJsonBody(req: IncomingMessage): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    req.on('end', () => {
+      try {
+        const raw = Buffer.concat(chunks).toString('utf-8');
+        resolve(raw ? JSON.parse(raw) : {});
+      } catch (err) {
+        reject(err);
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+function jsonResponse(res: ServerResponse, status: number, body: unknown): void {
+  res.setHeader('Content-Type', 'application/json');
+  res.writeHead(status);
+  res.end(JSON.stringify(body));
+}
+
+function formatBalance(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return `${h}h ${m}m`;
+}
+
 export function startWebServer(
   config: ClawdfatherConfig,
   pluginRoot: string,
-  onInbound: (sessionId: string, text: string, keyFingerprint: string) => Promise<void>
+  onInbound: (sessionId: string, text: string, keyFingerprint: string) => Promise<void>,
+  accountStore?: AccountStore,
 ): { server: HttpServer; release: () => void } {
   if (singletonServer) {
     singletonRefCount++;
@@ -104,8 +154,8 @@ export function startWebServer(
       res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
       res.setHeader("Vary", "Origin");
     }
-    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
@@ -151,6 +201,183 @@ export function startWebServer(
       return;
     }
 
+    // --- Stripe webhook (raw body, no auth) ---
+    if (url === '/api/webhooks/stripe' && req.method === 'POST') {
+      if (!accountStore) {
+        jsonResponse(res, 503, { error: 'Account system not available' });
+        return;
+      }
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', async () => {
+        const rawBody = Buffer.concat(chunks);
+        const signature = req.headers['stripe-signature'] as string;
+        if (!signature) {
+          jsonResponse(res, 400, { error: 'Missing stripe-signature header' });
+          return;
+        }
+        try {
+          const payments = getStripePayments(config, accountStore);
+          const result = await payments.handleWebhook(rawBody, signature);
+          jsonResponse(res, 200, { received: true, ...result });
+        } catch (err: any) {
+          console.error(`[clawdfather] Stripe webhook error: ${err.message}`);
+          jsonResponse(res, 400, { error: err.message });
+        }
+      });
+      return;
+    }
+
+    // --- Account API: GET /api/account/me ---
+    if (url === '/api/account/me' && req.method === 'GET') {
+      if (!accountStore) {
+        jsonResponse(res, 503, { error: 'Account system not available' });
+        return;
+      }
+      const auth = getAuthenticatedAccount(req, accountStore);
+      if (!auth) {
+        jsonResponse(res, 401, { error: 'Unauthorized' });
+        return;
+      }
+      const keys = accountStore.getKeysForAccount(auth.account.accountId);
+      jsonResponse(res, 200, {
+        accountId: auth.account.accountId,
+        creditsSec: auth.account.creditsSec,
+        balanceFormatted: formatBalance(auth.account.creditsSec),
+        tokenExpiresAt: auth.tokenRecord.expiresAt,
+        keys: keys.map((k) => ({
+          keyId: k.keyId,
+          fingerprint: k.fingerprint,
+          label: k.label,
+          addedAt: k.addedAt,
+        })),
+      });
+      return;
+    }
+
+    // --- Account API: POST /api/account/token/refresh ---
+    if (url === '/api/account/token/refresh' && req.method === 'POST') {
+      if (!accountStore) {
+        jsonResponse(res, 503, { error: 'Account system not available' });
+        return;
+      }
+      const auth = getAuthenticatedAccount(req, accountStore);
+      if (!auth) {
+        jsonResponse(res, 401, { error: 'Unauthorized' });
+        return;
+      }
+      const oldTokenId = auth.tokenRecord.tokenId;
+      const ttlMs = config.tokenTtlMs ?? 15 * 60 * 1000;
+      const newToken = accountStore.issueToken(
+        auth.account.accountId,
+        auth.tokenRecord.sessionId,
+        ttlMs,
+      );
+      accountStore.revokeToken(oldTokenId);
+      jsonResponse(res, 200, {
+        token: newToken.token,
+        expiresAt: newToken.expiresAt,
+      });
+      return;
+    }
+
+    // --- Account API: POST /api/account/keys/add ---
+    if (url === '/api/account/keys/add' && req.method === 'POST') {
+      if (!accountStore) {
+        jsonResponse(res, 503, { error: 'Account system not available' });
+        return;
+      }
+      const auth = getAuthenticatedAccount(req, accountStore);
+      if (!auth) {
+        jsonResponse(res, 401, { error: 'Unauthorized' });
+        return;
+      }
+      const _store = accountStore;
+      const _account = auth.account;
+      readJsonBody(req).then((body) => {
+        const fingerprint = body?.fingerprint as string | undefined;
+        if (
+          !fingerprint ||
+          typeof fingerprint !== 'string' ||
+          !fingerprint.startsWith('SHA256:') ||
+          fingerprint.length < 10
+        ) {
+          jsonResponse(res, 400, {
+            error: 'Invalid fingerprint. Must start with "SHA256:" and be a valid key fingerprint.',
+          });
+          return;
+        }
+        const existingKeys = _store.getKeysForAccount(_account.accountId);
+        if (existingKeys.some((k) => k.fingerprint === fingerprint)) {
+          jsonResponse(res, 400, { error: 'Fingerprint already associated with this account' });
+          return;
+        }
+        const key = _store.addKey(_account.accountId, fingerprint, body.label);
+        jsonResponse(res, 200, { key });
+      }).catch((err: any) => {
+        jsonResponse(res, 400, { error: err.message });
+      });
+      return;
+    }
+
+    // --- Account API: DELETE /api/account/keys/:keyId ---
+    if (url.startsWith('/api/account/keys/') && req.method === 'DELETE') {
+      if (!accountStore) {
+        jsonResponse(res, 503, { error: 'Account system not available' });
+        return;
+      }
+      const auth = getAuthenticatedAccount(req, accountStore);
+      if (!auth) {
+        jsonResponse(res, 401, { error: 'Unauthorized' });
+        return;
+      }
+      const keyId = url.replace('/api/account/keys/', '').split('?')[0];
+      const keys = accountStore.getKeysForAccount(auth.account.accountId);
+      if (!keys.some((k) => k.keyId === keyId)) {
+        jsonResponse(res, 404, { error: 'Key not found or does not belong to this account' });
+        return;
+      }
+      const result = accountStore.removeKey(keyId);
+      jsonResponse(res, result.removed ? 200 : 400, result);
+      return;
+    }
+
+    // --- Account API: POST /api/account/checkout ---
+    if (url === '/api/account/checkout' && req.method === 'POST') {
+      if (!accountStore) {
+        jsonResponse(res, 503, { error: 'Account system not available' });
+        return;
+      }
+      const auth = getAuthenticatedAccount(req, accountStore);
+      if (!auth) {
+        jsonResponse(res, 401, { error: 'Unauthorized' });
+        return;
+      }
+      const _store = accountStore;
+      const _accountId = auth.account.accountId;
+      readJsonBody(req).then(async (body) => {
+        const payments = getStripePayments(config, _store);
+        const hours = Math.min(Math.max(Math.floor(body?.hours ?? 1), 1), 24);
+        const protocol = config.webDomain === 'localhost' ? 'http' : 'https';
+        const baseUrl = `${protocol}://${config.webDomain}`;
+        const { url: checkoutUrl } = await payments.createCheckoutSession({
+          accountId: _accountId,
+          hours,
+          successUrl: `${baseUrl}/?payment=success`,
+          cancelUrl: `${baseUrl}/?payment=cancelled`,
+        });
+        jsonResponse(res, 200, { checkoutUrl });
+      }).catch((err: any) => {
+        if (err.message.includes('Stripe secret key not configured')) {
+          jsonResponse(res, 503, { error: 'Stripe payments not configured' });
+        } else {
+          console.error(`[clawdfather] Checkout error: ${err.message}`);
+          jsonResponse(res, 500, { error: 'Failed to create checkout session' });
+        }
+      });
+      return;
+    }
+
     // Static files
     let filePath: string;
     if (url === "/" || url === "/index.html") {
@@ -168,8 +395,14 @@ export function startWebServer(
     }
 
     if (!existsSync(filePath)) {
-      // SPA fallback
-      filePath = join(uiDir, "index.html");
+      // Serve account.html for /account path
+      const cleanUrl = (req.url ?? "/").split("?")[0].replace(/\.\./g, "");
+      if (cleanUrl === "/account") {
+        filePath = join(uiDir, "account.html");
+      } else {
+        // SPA fallback
+        filePath = join(uiDir, "index.html");
+      }
     }
 
     try {
