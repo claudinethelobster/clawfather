@@ -51,7 +51,7 @@ Check logs: `ssh openclaw@HOST "journalctl --user -u openclaw-gateway -n 50 --no
 | Finding | Fix |
 |---------|-----|
 | `openclaw: NOT FOUND` | Reinstall: `curl -fsSL https://openclaw.ai/install.sh \| bash -s -- --no-onboard` |
-| Config missing | Rerun `scripts/vps-install-native.sh` or write config manually |
+| Config missing | Rerun openclaw-vps-install skill or write config manually |
 | Service file missing | `openclaw gateway install && systemctl --user daemon-reload` |
 | `EACCES` | Fix permissions (see [SC-8]) |
 | `EADDRINUSE` | `fuser -k 18789/tcp` then restart gateway |
