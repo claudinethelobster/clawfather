@@ -1,1391 +1,1165 @@
-/**
- * Clawdfather — Mobile-First Web UI
- * Single-page app: OAuth auth, connections, sessions, settings, chat.
- */
 (function () {
-  'use strict';
+  "use strict";
 
-  // ═══════════════════════════════════════════════════════════════════
-  // State
-  // ═══════════════════════════════════════════════════════════════════
+  // ── Configuration ──────────────────────────────────────────────────
+  const API = "/api/v1";
+  const TOKEN_KEY = "clf_token";
+  const VERSION = "0.2.0";
 
-  const state = {
-    token: localStorage.getItem('clf_token'),
-    account: null,
-    connections: [],
-    keypairs: [],
-    sessions: [],
-    activeView: 'connections',
-    activeChatSession: null,
-    chatWs: null,
-    chatTimer: null,
-    chatStartedAt: null,
-    loading: {},
-  };
+  // ── State ──────────────────────────────────────────────────────────
+  let token = localStorage.getItem(TOKEN_KEY);
+  let account = null;
+  let connections = [];
+  let keypairs = [];
+  let sessions = [];
+  let currentView = "connections";
+  let ws = null;
+  let wsAuthenticated = false;
+  let heartbeatTimer = null;
+  let chatTimerInterval = null;
+  let chatSessionId = null;
+  let chatStartedAt = null;
+  let isThinking = false;
 
-  // ═══════════════════════════════════════════════════════════════════
-  // API Client
-  // ═══════════════════════════════════════════════════════════════════
+  // ── DOM References ─────────────────────────────────────────────────
+  const $ = (id) => document.getElementById(id);
 
+  const screenAuth = $("screen-auth");
+  const appShell = $("app-shell");
+  const btnGithubLogin = $("btn-github-login");
+  const authError = $("auth-error");
+  const headerAccountName = $("header-account-name");
+  const headerAvatar = $("header-avatar");
+  const bottomNav = $("bottom-nav");
+
+  const viewConnections = $("view-connections");
+  const connectionsLoading = $("connections-loading");
+  const connectionsEmpty = $("connections-empty");
+  const connectionsList = $("connections-list");
+  const fabAddConnection = $("fab-add-connection");
+
+  const viewSessions = $("view-sessions");
+  const sessionsLoading = $("sessions-loading");
+  const sessionsEmpty = $("sessions-empty");
+  const sessionsList = $("sessions-list");
+
+  const viewSettings = $("view-settings");
+  const settingsAvatar = $("settings-avatar");
+  const settingsDisplayName = $("settings-display-name");
+  const settingsEmail = $("settings-email");
+  const settingsVersion = $("settings-version");
+  const keysList = $("keys-list");
+  const btnGenerateKey = $("btn-generate-key");
+  const btnSignOut = $("btn-sign-out");
+
+  const viewChat = $("view-chat");
+  const chatConnectionLabel = $("chat-connection-label");
+  const chatTimer = $("chat-timer");
+  const chatMessages = $("chat-messages");
+  const chatInput = $("chat-input");
+  const btnChatSend = $("btn-chat-send");
+  const btnEndSession = $("btn-end-session");
+
+  const sheetBackdrop = $("sheet-backdrop");
+  const sheet = $("sheet");
+  const sheetTitle = $("sheet-title");
+  const sheetContent = $("sheet-content");
+
+  const toastContainer = $("toast-container");
+
+  // ── API Helpers ────────────────────────────────────────────────────
   async function api(method, path, body) {
-    const headers = { 'Content-Type': 'application/json' };
-    if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = "Bearer " + token;
 
-    try {
-      const res = await fetch(path, {
-        method,
-        headers,
-        body: body ? JSON.stringify(body) : undefined,
-      });
+    const opts = { method, headers };
+    if (body !== undefined) opts.body = JSON.stringify(body);
 
-      if (res.status === 401) {
-        logout();
-        return null;
-      }
+    const res = await fetch(API + path, opts);
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        const errMsg = data?.error?.message || data?.message || 'Request failed';
-        throw new Error(errMsg);
-      }
-
-      return data;
-    } catch (err) {
-      if (err.message === 'Failed to fetch') {
-        throw new Error('Network error. Check your connection and try again.');
-      }
-      throw err;
+    if (res.status === 401) {
+      logout();
+      throw new Error("Session expired");
     }
+
+    const data = await res.json();
+    if (!res.ok) {
+      const msg = data.message || data.error || "Request failed";
+      throw Object.assign(new Error(msg), { status: res.status, code: data.code, data });
+    }
+    return data;
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  // Toast Notifications
-  // ═══════════════════════════════════════════════════════════════════
-
+  // ── Toast Notifications ────────────────────────────────────────────
   function showToast(message, type) {
-    type = type || 'info';
-    const container = document.getElementById('toast-container');
-    const toast = document.createElement('div');
-    toast.className = 'toast toast-' + type;
-    toast.textContent = message;
-    container.appendChild(toast);
-
+    type = type || "info";
+    var el = document.createElement("div");
+    el.className = "toast toast-" + type;
+    el.textContent = message;
+    toastContainer.appendChild(el);
     setTimeout(function () {
-      toast.classList.add('toast-exit');
-      toast.addEventListener('animationend', function () { toast.remove(); });
+      el.classList.add("toast-exit");
+      setTimeout(function () { el.remove(); }, 300);
     }, 3000);
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  // Bottom Sheet
-  // ═══════════════════════════════════════════════════════════════════
-
-  function showSheet(title, contentHtml, onClose) {
-    const backdrop = document.getElementById('sheet-backdrop');
-    const sheet = document.getElementById('sheet');
-    const titleEl = document.getElementById('sheet-title');
-    const contentEl = document.getElementById('sheet-content');
-
-    titleEl.textContent = title;
-    contentEl.innerHTML = contentHtml;
-
-    backdrop.hidden = false;
-    sheet.hidden = false;
-
-    requestAnimationFrame(function () {
-      backdrop.classList.add('visible');
-      sheet.classList.add('visible');
-    });
-
-    sheet._onClose = onClose || null;
-
-    backdrop.onclick = function () { closeSheet(); };
+  // ── Auth ───────────────────────────────────────────────────────────
+  function showAuthScreen() {
+    screenAuth.classList.add("active");
+    appShell.hidden = true;
+    authError.hidden = true;
   }
 
-  window.closeSheet = function () {
-    const backdrop = document.getElementById('sheet-backdrop');
-    const sheet = document.getElementById('sheet');
-
-    backdrop.classList.remove('visible');
-    sheet.classList.remove('visible');
-
-    setTimeout(function () {
-      backdrop.hidden = true;
-      sheet.hidden = true;
-      if (sheet._onClose) sheet._onClose();
-      sheet._onClose = null;
-    }, 300);
-  };
-
-  // ═══════════════════════════════════════════════════════════════════
-  // Context Menu
-  // ═══════════════════════════════════════════════════════════════════
-
-  function showContextMenu(x, y, items) {
-    closeContextMenu();
-    const menu = document.createElement('div');
-    menu.className = 'context-menu';
-    menu.id = 'context-menu';
-
-    items.forEach(function (item) {
-      const btn = document.createElement('button');
-      btn.className = 'context-menu-item' + (item.danger ? ' danger' : '');
-      btn.textContent = item.label;
-      btn.onclick = function () {
-        closeContextMenu();
-        item.action();
-      };
-      menu.appendChild(btn);
-    });
-
-    const maxX = window.innerWidth - 180;
-    const maxY = window.innerHeight - (items.length * 44 + 16);
-    menu.style.left = Math.min(x, maxX) + 'px';
-    menu.style.top = Math.min(y, maxY) + 'px';
-
-    document.body.appendChild(menu);
-
-    setTimeout(function () {
-      document.addEventListener('click', closeContextMenu, { once: true });
-    }, 10);
-  }
-
-  function closeContextMenu() {
-    const existing = document.getElementById('context-menu');
-    if (existing) existing.remove();
-  }
-
-  // ═══════════════════════════════════════════════════════════════════
-  // Navigation
-  // ═══════════════════════════════════════════════════════════════════
-
-  window.navigate = function (view) {
-    if (state.activeView === view) return;
-    state.activeView = view;
-
-    document.querySelectorAll('.nav-tab').forEach(function (tab) {
-      tab.classList.toggle('active', tab.dataset.view === view);
-    });
-
-    ['connections', 'sessions', 'settings'].forEach(function (v) {
-      const el = document.getElementById('view-' + v);
-      if (el) el.hidden = v !== view;
-    });
-
-    if (view === 'connections') loadConnections();
-    if (view === 'sessions') loadSessions();
-    if (view === 'settings') loadSettings();
-  };
-
-  // ═══════════════════════════════════════════════════════════════════
-  // Auth: OAuth Flow
-  // ═══════════════════════════════════════════════════════════════════
-
-  async function handleOAuthCallback() {
-    const params = new URLSearchParams(window.location.search);
-    if (!params.has('code') || !params.has('state')) return false;
-
-    const code = params.get('code');
-    const oauthState = params.get('state');
-
-    try {
-      const result = await api('GET',
-        '/api/v1/auth/oauth/github/callback?code=' +
-        encodeURIComponent(code) + '&state=' + encodeURIComponent(oauthState)
-      );
-
-      if (result && result.token) {
-        state.token = result.token;
-        localStorage.setItem('clf_token', result.token);
-        if (result.account) state.account = result.account;
-        window.history.replaceState({}, '', window.location.pathname);
-        return true;
-      }
-    } catch (err) {
-      showAuthError(err.message);
-      window.history.replaceState({}, '', window.location.pathname);
-    }
-
-    return false;
-  }
-
-  async function startOAuth() {
-    const btn = document.getElementById('btn-github-login');
-    btn.disabled = true;
-    btn.textContent = 'Connecting to GitHub...';
-    hideAuthError();
-
-    try {
-      const data = await api('POST', '/api/v1/auth/oauth/github/start', {
-        redirect_uri: window.location.origin + window.location.pathname,
-      });
-      if (data && data.authorize_url) {
-        window.location.href = data.authorize_url;
-        return;
-      }
-      throw new Error('No authorization URL returned');
-    } catch (err) {
-      showAuthError(err.message);
-      btn.disabled = false;
-      btn.innerHTML =
-        '<svg class="github-icon" viewBox="0 0 16 16" width="20" height="20" fill="currentColor">' +
-        '<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>' +
-        '</svg> Sign in with GitHub';
-    }
+  function showApp() {
+    screenAuth.classList.remove("active");
+    appShell.hidden = false;
   }
 
   function showAuthError(msg) {
-    const el = document.getElementById('auth-error');
-    el.textContent = msg;
-    el.hidden = false;
-  }
-
-  function hideAuthError() {
-    document.getElementById('auth-error').hidden = true;
+    authError.textContent = msg;
+    authError.hidden = false;
   }
 
   function logout() {
-    api('DELETE', '/api/v1/auth/session').catch(function () {});
-    state.token = null;
-    state.account = null;
-    localStorage.removeItem('clf_token');
-    disconnectChat();
+    if (token) {
+      api("DELETE", "/auth/session").catch(function () {});
+    }
+    token = null;
+    account = null;
+    localStorage.removeItem(TOKEN_KEY);
+    disconnectWs();
     showAuthScreen();
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  // Screen Management
-  // ═══════════════════════════════════════════════════════════════════
-
-  function showAuthScreen() {
-    document.getElementById('screen-auth').classList.add('active');
-    document.getElementById('app-shell').hidden = true;
-  }
-
-  function showAppShell() {
-    document.getElementById('screen-auth').classList.remove('active');
-    document.getElementById('app-shell').hidden = false;
-    navigate('connections');
-  }
-
-  // ═══════════════════════════════════════════════════════════════════
-  // Account
-  // ═══════════════════════════════════════════════════════════════════
-
-  async function loadAccount() {
+  async function startGitHubOAuth() {
+    btnGithubLogin.disabled = true;
     try {
-      const data = await api('GET', '/api/v1/auth/me');
-      if (!data) return;
-      state.account = data.account;
-      updateAccountUI();
+      var data = await api("POST", "/auth/oauth/github/start");
+      window.location.href = data.authorize_url;
     } catch (err) {
-      console.error('Failed to load account:', err);
+      showAuthError(err.message);
+      btnGithubLogin.disabled = false;
     }
   }
 
-  function updateAccountUI() {
-    const acct = state.account;
-    if (!acct) return;
-
-    const initial = (acct.display_name || acct.email || '?')[0].toUpperCase();
-
-    const headerAvatar = document.getElementById('header-avatar');
-    headerAvatar.textContent = initial;
-
-    const headerName = document.getElementById('header-account-name');
-    headerName.textContent = acct.display_name || acct.email || '';
-
-    const settingsAvatar = document.getElementById('settings-avatar');
-    settingsAvatar.textContent = initial;
-
-    const settingsName = document.getElementById('settings-display-name');
-    settingsName.textContent = acct.display_name || 'Unknown';
-
-    const settingsEmail = document.getElementById('settings-email');
-    settingsEmail.textContent = acct.email || '';
+  async function handleOAuthCallback(code, state) {
+    showAuthScreen();
+    try {
+      var res = await fetch(
+        API + "/auth/oauth/github/callback?code=" + encodeURIComponent(code) + "&state=" + encodeURIComponent(state)
+      );
+      var data = await res.json();
+      if (!res.ok) {
+        showAuthError(data.message || "OAuth callback failed");
+        return;
+      }
+      token = data.token;
+      localStorage.setItem(TOKEN_KEY, token);
+      account = data.account;
+      window.history.replaceState(null, "", window.location.pathname);
+      bootApp();
+    } catch (err) {
+      showAuthError(err.message || "OAuth callback failed");
+    }
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  // Connections
-  // ═══════════════════════════════════════════════════════════════════
+  // ── App Boot ───────────────────────────────────────────────────────
+  async function bootApp() {
+    showApp();
+    settingsVersion.textContent = VERSION;
+    try {
+      var me = await api("GET", "/auth/me");
+      account = me.account;
+      renderHeader();
+      renderSettings();
+    } catch (err) {
+      if (err.message !== "Session expired") {
+        showToast("Failed to load account: " + err.message, "error");
+      }
+      return;
+    }
+    navigate(currentView);
+  }
 
+  function renderHeader() {
+    if (!account) return;
+    headerAccountName.textContent = account.display_name || "";
+    var initial = (account.display_name || "?")[0].toUpperCase();
+    headerAvatar.textContent = initial;
+  }
+
+  // ── Navigation ─────────────────────────────────────────────────────
+  window.navigate = function (view) {
+    currentView = view;
+
+    viewConnections.hidden = view !== "connections";
+    viewSessions.hidden = view !== "sessions";
+    viewSettings.hidden = view !== "settings";
+    viewChat.hidden = true;
+    viewChat.classList.remove("active-chat");
+
+    bottomNav.hidden = false;
+
+    document.querySelectorAll(".nav-tab").forEach(function (tab) {
+      tab.classList.toggle("active", tab.getAttribute("data-view") === view);
+    });
+
+    if (view === "connections") loadConnections();
+    else if (view === "sessions") loadSessions();
+    else if (view === "settings") loadSettings();
+  };
+
+  // ── Connections ────────────────────────────────────────────────────
   async function loadConnections() {
-    const loadingEl = document.getElementById('connections-loading');
-    const emptyEl = document.getElementById('connections-empty');
-    const listEl = document.getElementById('connections-list');
-    const fabEl = document.getElementById('fab-add-connection');
-
-    loadingEl.hidden = false;
-    emptyEl.hidden = true;
-    listEl.hidden = true;
-    fabEl.hidden = true;
+    connectionsLoading.hidden = false;
+    connectionsEmpty.hidden = true;
+    connectionsList.hidden = true;
+    fabAddConnection.hidden = true;
 
     try {
-      const data = await api('GET', '/api/v1/connections');
-      if (!data) return;
+      var data = await api("GET", "/connections");
+      connections = data.connections || [];
 
-      state.connections = data.connections || [];
-      loadingEl.hidden = true;
-
-      if (state.connections.length === 0) {
-        emptyEl.hidden = false;
-      } else {
-        listEl.hidden = false;
-        fabEl.hidden = false;
-        renderConnections();
-      }
+      var kData = await api("GET", "/keys");
+      keypairs = (kData.keypairs || []).filter(function (k) { return k.is_active; });
     } catch (err) {
-      loadingEl.hidden = true;
-      showToast('Failed to load connections: ' + err.message, 'error');
+      connectionsLoading.hidden = true;
+      showToast("Failed to load connections: " + err.message, "error");
+      return;
+    }
+
+    connectionsLoading.hidden = true;
+    if (connections.length === 0) {
+      connectionsEmpty.hidden = false;
+    } else {
+      connectionsList.hidden = false;
+      fabAddConnection.hidden = false;
+      renderConnections();
     }
   }
 
   function renderConnections() {
-    const listEl = document.getElementById('connections-list');
-    listEl.innerHTML = '';
-
-    state.connections.forEach(function (conn) {
-      const card = document.createElement('div');
-      card.className = 'card';
-      card.onclick = function () { showConnectionDetail(conn); };
-
-      var pillClass, pillText;
-      if (conn.last_test_result === 'ok') {
-        pillClass = 'pill-success';
-        pillText = '✓ Tested';
-      } else if (conn.last_test_result === 'failed' || conn.last_test_result === 'timeout') {
-        pillClass = 'pill-danger';
-        pillText = '⚠ Test failed';
-      } else {
-        pillClass = 'pill-gray';
-        pillText = 'Not tested';
+    connectionsList.innerHTML = "";
+    connections.forEach(function (conn) {
+      var statusClass = "pill-gray";
+      var statusLabel = "Untested";
+      if (conn.last_test_result === "ok") {
+        statusClass = "pill-success";
+        statusLabel = "Tested";
+      } else if (conn.last_test_result === "failed" || conn.last_test_result === "timeout") {
+        statusClass = "pill-danger";
+        statusLabel = conn.last_test_result === "timeout" ? "Timeout" : "Failed";
       }
 
-      var timeStr = '';
-      if (conn.last_tested_at) {
-        timeStr = formatRelativeTime(conn.last_tested_at);
-      }
+      var timeStr = conn.last_tested_at ? timeAgo(conn.last_tested_at) : "";
 
+      var card = document.createElement("div");
+      card.className = "card";
       card.innerHTML =
         '<div class="card-header">' +
-          '<span class="card-label">' + escapeHtml(conn.label) + '</span>' +
-          '<button class="card-menu" data-conn-id="' + conn.id + '">···</button>' +
+          '<span class="card-label">' + esc(conn.label) + '</span>' +
+          '<button class="card-menu" onclick="event.stopPropagation(); showConnectionMenu(\'' + conn.id + '\', this)">⋮</button>' +
         '</div>' +
-        '<div class="card-host">' + escapeHtml(conn.username) + '@' + escapeHtml(conn.host) + ':' + (conn.port || 22) + '</div>' +
+        '<div class="card-host">' + esc(conn.username + "@" + conn.host + ":" + conn.port) + '</div>' +
         '<div class="card-footer">' +
-          '<span class="pill ' + pillClass + '">' + pillText + '</span>' +
-          (timeStr ? '<span class="card-time">' + timeStr + '</span>' : '') +
+          '<span class="pill ' + statusClass + '">' + statusLabel + '</span>' +
+          (timeStr ? '<span class="card-time">' + esc(timeStr) + '</span>' : '') +
         '</div>';
-
-      var menuBtn = card.querySelector('.card-menu');
-      menuBtn.onclick = function (e) {
-        e.stopPropagation();
-        showConnectionMenu(conn, e);
-      };
-
-      listEl.appendChild(card);
+      card.addEventListener("click", function () {
+        showConnectionDetail(conn);
+      });
+      connectionsList.appendChild(card);
     });
   }
 
-  function showConnectionMenu(conn, event) {
-    var rect = event.target.getBoundingClientRect();
-    showContextMenu(rect.left - 120, rect.bottom + 4, [
-      { label: 'Edit', action: function () { showEditConnectionSheet(conn); } },
-      { label: 'Test Connection', action: function () { testConnection(conn.id); } },
-      { label: 'Delete', danger: true, action: function () { confirmDeleteConnection(conn); } },
-    ]);
+  // ── Connection Detail Sheet ────────────────────────────────────────
+  function showConnectionDetail(conn) {
+    openSheet(esc(conn.label));
+
+    var statusPill = "pill-gray";
+    var statusLabel = "Untested";
+    if (conn.last_test_result === "ok") {
+      statusPill = "pill-success";
+      statusLabel = "Tested OK";
+    } else if (conn.last_test_result === "failed" || conn.last_test_result === "timeout") {
+      statusPill = "pill-danger";
+      statusLabel = conn.last_test_result === "timeout" ? "Timed out" : "Failed";
+    }
+
+    sheetContent.innerHTML =
+      '<div class="detail-row"><span class="detail-label">Host</span><span class="detail-value">' + esc(conn.host) + '</span></div>' +
+      '<div class="detail-row"><span class="detail-label">Port</span><span class="detail-value">' + conn.port + '</span></div>' +
+      '<div class="detail-row"><span class="detail-label">Username</span><span class="detail-value">' + esc(conn.username) + '</span></div>' +
+      '<div class="detail-row"><span class="detail-label">Status</span><span class="pill ' + statusPill + '">' + statusLabel + '</span></div>' +
+      (conn.last_tested_at ? '<div class="detail-row"><span class="detail-label">Last tested</span><span class="detail-value">' + esc(timeAgo(conn.last_tested_at)) + '</span></div>' : '') +
+      '<div class="detail-actions">' +
+        '<button class="btn btn-secondary" id="detail-btn-test">Test Connection</button>' +
+        (conn.last_test_result === "ok" ? '<button class="btn btn-primary" id="detail-btn-session">Start Session</button>' : '') +
+      '</div>' +
+      '<button class="detail-delete" id="detail-btn-delete">Delete Connection</button>';
+
+    $("detail-btn-test").addEventListener("click", function () { testConnection(conn.id); });
+
+    var sessionBtn = $("detail-btn-session");
+    if (sessionBtn) {
+      sessionBtn.addEventListener("click", function () { startSession(conn.id); });
+    }
+
+    $("detail-btn-delete").addEventListener("click", function () { confirmDeleteConnection(conn.id, conn.label); });
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  // Add Connection Sheet
-  // ═══════════════════════════════════════════════════════════════════
+  // ── Connection Context Menu ────────────────────────────────────────
+  window.showConnectionMenu = function (connId, btn) {
+    closeContextMenu();
+    var conn = connections.find(function (c) { return c.id === connId; });
+    if (!conn) return;
 
-  window.showAddConnectionSheet = function () {
-    loadKeypairsForForm().then(function (options) {
-      showSheet('Add Connection',
-        '<form id="form-add-conn" onsubmit="return false">' +
-          '<div class="form-group">' +
-            '<label class="form-label">Label</label>' +
-            '<input class="form-input" id="add-conn-label" type="text" placeholder="e.g. prod-api-1" required autocomplete="off">' +
-          '</div>' +
-          '<div class="form-group">' +
-            '<label class="form-label">Host</label>' +
-            '<input class="form-input" id="add-conn-host" type="text" placeholder="e.g. 192.168.1.100 or server.example.com" required autocomplete="off">' +
-          '</div>' +
-          '<div class="form-row">' +
-            '<div class="form-group">' +
-              '<label class="form-label">Username</label>' +
-              '<input class="form-input" id="add-conn-username" type="text" placeholder="e.g. deploy" required autocomplete="off">' +
-            '</div>' +
-            '<div class="form-group" style="max-width:100px">' +
-              '<label class="form-label">Port</label>' +
-              '<input class="form-input" id="add-conn-port" type="number" value="22" min="1" max="65535" placeholder="22">' +
-            '</div>' +
-          '</div>' +
-          '<div class="form-group">' +
-            '<label class="form-label">SSH Key</label>' +
-            '<select class="form-select" id="add-conn-keypair">' + options + '</select>' +
-          '</div>' +
-          '<div id="add-conn-error" class="form-error" hidden></div>' +
-          '<button class="btn btn-primary btn-block mt-16" onclick="submitAddConnection()">Add Connection</button>' +
-        '</form>'
-      );
+    var rect = btn.getBoundingClientRect();
+    var menu = document.createElement("div");
+    menu.className = "context-menu";
+    menu.id = "context-menu";
+    menu.style.top = rect.bottom + 4 + "px";
+    menu.style.right = (window.innerWidth - rect.right) + "px";
+
+    menu.innerHTML =
+      '<button class="context-menu-item" data-action="test">Test Connection</button>' +
+      (conn.last_test_result === "ok" ? '<button class="context-menu-item" data-action="session">Start Session</button>' : '') +
+      '<button class="context-menu-item danger" data-action="delete">Delete</button>';
+
+    menu.addEventListener("click", function (e) {
+      var action = e.target.getAttribute("data-action");
+      closeContextMenu();
+      if (action === "test") testConnection(connId);
+      else if (action === "session") startSession(connId);
+      else if (action === "delete") confirmDeleteConnection(connId, conn.label);
     });
+
+    document.body.appendChild(menu);
+
+    setTimeout(function () {
+      document.addEventListener("click", closeContextMenu, { once: true });
+    }, 0);
   };
 
-  async function loadKeypairsForForm() {
+  function closeContextMenu() {
+    var m = $("context-menu");
+    if (m) m.remove();
+  }
+
+  // ── Test Connection ────────────────────────────────────────────────
+  async function testConnection(connId) {
+    closeSheet();
+    closeContextMenu();
+
+    openSheet("Testing Connection");
+    sheetContent.innerHTML =
+      '<div class="test-result"><div class="spinner"></div><p>Connecting via SSH...</p></div>';
+
     try {
-      const data = await api('GET', '/api/v1/keys');
-      if (!data) return '<option>No keys available</option>';
-      state.keypairs = data.keypairs || [];
-      return state.keypairs
-        .filter(function (k) { return k.is_active; })
-        .map(function (k) {
-          return '<option value="' + k.id + '">' + escapeHtml(k.label) + ' (' + k.fingerprint.substring(0, 24) + '...)</option>';
-        })
-        .join('') || '<option>No active keys</option>';
+      var result = await api("POST", "/connections/" + connId + "/test");
+      if (result.result === "ok") {
+        sheetContent.innerHTML =
+          '<div class="test-result">' +
+            '<div class="test-result-icon">✅</div>' +
+            '<div class="test-result-title">Connection Successful</div>' +
+            '<div class="test-result-detail">' + (result.latency_ms ? result.latency_ms + "ms latency" : "") + '</div>' +
+          '</div>' +
+          '<button class="btn btn-primary btn-block" id="test-done-btn">Done</button>';
+        $("test-done-btn").addEventListener("click", function () {
+          closeSheet();
+          loadConnections();
+        });
+      } else {
+        sheetContent.innerHTML =
+          '<div class="test-result">' +
+            '<div class="test-result-icon">❌</div>' +
+            '<div class="test-result-title">' + esc(result.result === "timeout" ? "Timed Out" : "Connection Failed") + '</div>' +
+            '<div class="test-result-detail">' + esc(result.message || "") + '</div>' +
+          '</div>' +
+          '<button class="btn btn-secondary btn-block" id="test-done-btn">Close</button>';
+        $("test-done-btn").addEventListener("click", function () {
+          closeSheet();
+          loadConnections();
+        });
+      }
     } catch (err) {
-      return '<option>Error loading keys</option>';
+      if (err.code === "host_key_changed" && err.data) {
+        renderHostKeyWarning(connId, err.data);
+      } else {
+        sheetContent.innerHTML =
+          '<div class="test-result">' +
+            '<div class="test-result-icon">❌</div>' +
+            '<div class="test-result-title">Error</div>' +
+            '<div class="test-result-detail">' + esc(err.message) + '</div>' +
+          '</div>' +
+          '<button class="btn btn-secondary btn-block" id="test-done-btn">Close</button>';
+        $("test-done-btn").addEventListener("click", closeSheet);
+      }
     }
   }
 
-  window.submitAddConnection = async function () {
-    const label = document.getElementById('add-conn-label').value.trim();
-    const host = document.getElementById('add-conn-host').value.trim();
-    const username = document.getElementById('add-conn-username').value.trim();
-    const port = parseInt(document.getElementById('add-conn-port').value) || 22;
-    const keypairId = document.getElementById('add-conn-keypair').value;
-    const errorEl = document.getElementById('add-conn-error');
+  function renderHostKeyWarning(connId, data) {
+    sheetContent.innerHTML =
+      '<div class="host-key-warning">' +
+        '<div class="host-key-warning-title">⚠️ Host Key Changed</div>' +
+        '<div class="host-key-warning-text">The server\'s SSH host key has changed since the last test. This could indicate a server reinstall or a man-in-the-middle attack.</div>' +
+        '<div class="host-key-fingerprints">' +
+          '<div class="host-key-fp-row"><span class="host-key-fp-label">Old:</span><span class="host-key-fp-value">' + esc(data.old_fingerprint || "") + '</span></div>' +
+          '<div class="host-key-fp-row"><span class="host-key-fp-label">New:</span><span class="host-key-fp-value">' + esc(data.new_fingerprint || "") + '</span></div>' +
+        '</div>' +
+        '<div class="host-key-actions">' +
+          '<button class="btn btn-secondary" id="hk-cancel">Cancel</button>' +
+          '<button class="btn btn-primary" id="hk-accept">Accept New Key</button>' +
+        '</div>' +
+      '</div>';
 
-    errorEl.hidden = true;
+    $("hk-cancel").addEventListener("click", function () {
+      closeSheet();
+      loadConnections();
+    });
+    $("hk-accept").addEventListener("click", async function () {
+      try {
+        await api("POST", "/connections/" + connId + "/test", { accept_host_key: true });
+        showToast("Host key updated", "success");
+        closeSheet();
+        loadConnections();
+      } catch (err) {
+        showToast(err.message, "error");
+      }
+    });
+  }
+
+  // ── Add Connection Sheet ───────────────────────────────────────────
+  window.showAddConnectionSheet = function () {
+    openSheet("Add Connection");
+
+    var keypairOptions = keypairs.map(function (kp) {
+      return '<option value="' + kp.id + '">' + esc(kp.label) + ' (' + esc((kp.fingerprint || "").slice(0, 20)) + '...)</option>';
+    }).join("");
+
+    sheetContent.innerHTML =
+      '<form id="add-connection-form">' +
+        '<div class="form-group">' +
+          '<label class="form-label">Label</label>' +
+          '<input class="form-input" id="conn-label" placeholder="My Server" required autocomplete="off">' +
+        '</div>' +
+        '<div class="form-group">' +
+          '<label class="form-label">Host</label>' +
+          '<input class="form-input" id="conn-host" placeholder="192.168.1.100 or server.example.com" required autocomplete="off">' +
+        '</div>' +
+        '<div class="form-row">' +
+          '<div class="form-group">' +
+            '<label class="form-label">Username</label>' +
+            '<input class="form-input" id="conn-username" placeholder="root" required autocomplete="off">' +
+          '</div>' +
+          '<div class="form-group">' +
+            '<label class="form-label">Port</label>' +
+            '<input class="form-input" id="conn-port" type="number" placeholder="22" value="22">' +
+          '</div>' +
+        '</div>' +
+        (keypairOptions
+          ? '<div class="form-group">' +
+              '<label class="form-label">SSH Key</label>' +
+              '<select class="form-select" id="conn-keypair">' + keypairOptions + '</select>' +
+            '</div>'
+          : '<div class="form-group"><p class="form-error">No SSH keys found. Generate one in Settings first.</p></div>'
+        ) +
+        '<div id="conn-form-error" class="form-error" hidden></div>' +
+        '<button type="submit" class="btn btn-primary btn-block mt-16"' + (keypairOptions ? '' : ' disabled') + '>Add Connection</button>' +
+      '</form>';
+
+    $("add-connection-form").addEventListener("submit", function (e) {
+      e.preventDefault();
+      submitAddConnection();
+    });
+  };
+
+  async function submitAddConnection() {
+    var label = $("conn-label").value.trim();
+    var host = $("conn-host").value.trim();
+    var username = $("conn-username").value.trim();
+    var port = parseInt($("conn-port").value, 10) || 22;
+    var keypairSelect = $("conn-keypair");
+    var keypairId = keypairSelect ? keypairSelect.value : undefined;
+    var errEl = $("conn-form-error");
+
+    errEl.hidden = true;
 
     if (!label || !host || !username) {
-      errorEl.textContent = 'Please fill in all required fields.';
-      errorEl.hidden = false;
+      errEl.textContent = "All fields are required.";
+      errEl.hidden = false;
       return;
     }
 
-    const body = { label, host, username, port };
-    if (keypairId) body.keypair_id = keypairId;
-
     try {
-      const data = await api('POST', '/api/v1/connections', body);
-      if (!data) return;
-
+      var data = await api("POST", "/connections", {
+        label: label,
+        host: host,
+        port: port,
+        username: username,
+        keypair_id: keypairId,
+      });
+      showToast("Connection added", "success");
       closeSheet();
-      showToast('Connection added!', 'success');
-      loadConnections();
 
-      var keypair = state.keypairs.find(function (k) { return k.id === keypairId; });
-      if (keypair) {
-        setTimeout(function () { showInstallKeySheet(keypair, data.connection); }, 400);
-      }
-    } catch (err) {
-      errorEl.textContent = err.message;
-      errorEl.hidden = false;
-    }
-  };
-
-  // ═══════════════════════════════════════════════════════════════════
-  // Edit Connection Sheet
-  // ═══════════════════════════════════════════════════════════════════
-
-  function showEditConnectionSheet(conn) {
-    loadKeypairsForForm().then(function (options) {
-      showSheet('Edit Connection',
-        '<form id="form-edit-conn" onsubmit="return false">' +
-          '<div class="form-group">' +
-            '<label class="form-label">Label</label>' +
-            '<input class="form-input" id="edit-conn-label" type="text" value="' + escapeHtml(conn.label) + '" required>' +
-          '</div>' +
-          '<div class="form-group">' +
-            '<label class="form-label">Host</label>' +
-            '<input class="form-input" id="edit-conn-host" type="text" value="' + escapeHtml(conn.host) + '" required>' +
-          '</div>' +
-          '<div class="form-row">' +
-            '<div class="form-group">' +
-              '<label class="form-label">Username</label>' +
-              '<input class="form-input" id="edit-conn-username" type="text" value="' + escapeHtml(conn.username) + '" required>' +
-            '</div>' +
-            '<div class="form-group" style="max-width:100px">' +
-              '<label class="form-label">Port</label>' +
-              '<input class="form-input" id="edit-conn-port" type="number" value="' + (conn.port || 22) + '" min="1" max="65535">' +
-            '</div>' +
-          '</div>' +
-          '<div class="form-group">' +
-            '<label class="form-label">SSH Key</label>' +
-            '<select class="form-select" id="edit-conn-keypair">' + options + '</select>' +
-          '</div>' +
-          '<div id="edit-conn-error" class="form-error" hidden></div>' +
-          '<button class="btn btn-primary btn-block mt-16" onclick="submitEditConnection(\'' + conn.id + '\')">Save Changes</button>' +
-        '</form>'
-      );
-
-      var kpSelect = document.getElementById('edit-conn-keypair');
-      if (kpSelect && conn.keypair_id) kpSelect.value = conn.keypair_id;
-    });
-  }
-
-  window.submitEditConnection = async function (connId) {
-    const label = document.getElementById('edit-conn-label').value.trim();
-    const host = document.getElementById('edit-conn-host').value.trim();
-    const username = document.getElementById('edit-conn-username').value.trim();
-    const port = parseInt(document.getElementById('edit-conn-port').value) || 22;
-    const keypairId = document.getElementById('edit-conn-keypair').value;
-    const errorEl = document.getElementById('edit-conn-error');
-
-    errorEl.hidden = true;
-
-    const body = { label, host, username, port };
-    if (keypairId) body.keypair_id = keypairId;
-
-    try {
-      await api('PATCH', '/api/v1/connections/' + connId, body);
-      closeSheet();
-      showToast('Connection updated!', 'success');
-      loadConnections();
-    } catch (err) {
-      errorEl.textContent = err.message;
-      errorEl.hidden = false;
-    }
-  };
-
-  // ═══════════════════════════════════════════════════════════════════
-  // Install Key Sheet
-  // ═══════════════════════════════════════════════════════════════════
-
-  async function showInstallKeySheet(keypair, connection) {
-    var command = '';
-    try {
-      const data = await api('GET', '/api/v1/keys/' + keypair.id + '/install-command');
-      if (data) command = data.command;
-    } catch (err) {
-      command = "mkdir -p ~/.ssh && echo '" + keypair.public_key + "' >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys";
-    }
-
-    showSheet('Install Key on Server',
-      '<p class="text-muted mb-16" style="font-size:14px">Run this command on your server to authorize Clawdfather:</p>' +
-      '<div class="command-box" id="install-command">' + escapeHtml(command) + '</div>' +
-      '<button class="btn btn-secondary btn-block mb-16" onclick="copyInstallCommand()">📋 Copy Command</button>' +
-      (connection ?
-        '<button class="btn btn-primary btn-block mb-16" onclick="testConnection(\'' + connection.id + '\')">Test Connection</button>' : '') +
-      '<button class="btn-text btn-block" onclick="closeSheet()">I\'ll do this later</button>'
-    );
-  }
-
-  window.copyInstallCommand = function () {
-    var el = document.getElementById('install-command');
-    if (!el) return;
-    navigator.clipboard.writeText(el.textContent).then(function () {
-      showToast('Command copied to clipboard!', 'success');
-    }).catch(function () {
-      showToast('Failed to copy — tap the command to select it', 'warning');
-    });
-  };
-
-  // ═══════════════════════════════════════════════════════════════════
-  // Connection Detail Sheet
-  // ═══════════════════════════════════════════════════════════════════
-
-  function showConnectionDetail(conn) {
-    var pillHtml = '';
-    if (conn.last_test_result === 'ok') {
-      pillHtml = '<span class="pill pill-success">✓ Tested</span>';
-    } else if (conn.last_test_result === 'failed' || conn.last_test_result === 'timeout') {
-      pillHtml = '<span class="pill pill-danger">⚠ Test failed</span>';
-    } else {
-      pillHtml = '<span class="pill pill-gray">Not tested</span>';
-    }
-
-    var startSessionBtn = '';
-    if (conn.last_test_result === 'ok') {
-      startSessionBtn = '<button class="btn btn-primary" onclick="startSession(\'' + conn.id + '\')">Start Session</button>';
-    }
-
-    showSheet(conn.label,
-      '<div class="detail-row"><span class="detail-label">Host</span><span class="detail-value">' + escapeHtml(conn.host) + '</span></div>' +
-      '<div class="detail-row"><span class="detail-label">Username</span><span class="detail-value">' + escapeHtml(conn.username) + '</span></div>' +
-      '<div class="detail-row"><span class="detail-label">Port</span><span class="detail-value">' + (conn.port || 22) + '</span></div>' +
-      '<div class="detail-row"><span class="detail-label">Status</span><span>' + pillHtml + '</span></div>' +
-      (conn.host_key_fingerprint ?
-        '<div class="detail-row"><span class="detail-label">Host Key</span><span class="detail-value">' + escapeHtml(conn.host_key_fingerprint.substring(0, 32)) + '...</span></div>' : '') +
-      '<div class="detail-actions">' +
-        '<button class="btn btn-secondary" onclick="testConnection(\'' + conn.id + '\')">Test Connection</button>' +
-        startSessionBtn +
-        '<button class="btn btn-secondary" onclick="showInstallForConnection(\'' + conn.id + '\')">Show Install Command</button>' +
-      '</div>' +
-      '<button class="detail-delete" onclick="confirmDeleteConnection({id:\'' + conn.id + '\',label:\'' + escapeHtml(conn.label).replace(/'/g, "\\'") + '\'})">Delete Connection</button>'
-    );
-  }
-
-  window.showInstallForConnection = async function (connId) {
-    var conn = state.connections.find(function (c) { return c.id === connId; });
-    if (!conn) return;
-
-    var keypair = state.keypairs.find(function (k) { return k.id === conn.keypair_id; });
-    if (!keypair) {
-      try {
-        var keysData = await api('GET', '/api/v1/keys');
-        state.keypairs = keysData.keypairs || [];
-        keypair = state.keypairs.find(function (k) { return k.id === conn.keypair_id; });
-      } catch (err) { /* fall through */ }
-    }
-
-    if (keypair) {
-      closeSheet();
-      setTimeout(function () { showInstallKeySheet(keypair, conn); }, 350);
-    } else {
-      showToast('Could not find the keypair for this connection', 'error');
-    }
-  };
-
-  // ═══════════════════════════════════════════════════════════════════
-  // Test Connection
-  // ═══════════════════════════════════════════════════════════════════
-
-  window.testConnection = async function (connId) {
-    closeSheet();
-    await new Promise(function (r) { setTimeout(r, 350); });
-
-    showSheet('Testing Connection',
-      '<div class="test-result">' +
-        '<div class="spinner"></div>' +
-        '<div class="test-result-title">Testing connection...</div>' +
-      '</div>'
-    );
-
-    try {
-      var data = await api('POST', '/api/v1/connections/' + connId + '/test', { accept_host_key: false });
-      if (!data) return;
-
-      if (data.result === 'ok') {
-        document.getElementById('sheet-content').innerHTML =
-          '<div class="test-result">' +
-            '<div class="test-result-icon">✅</div>' +
-            '<div class="test-result-title" style="color:var(--success)">Connected in ' + (data.latency_ms || '?') + 'ms</div>' +
-            (data.host_key_fingerprint ? '<div class="test-result-detail">' + escapeHtml(data.host_key_fingerprint) + '</div>' : '') +
-          '</div>' +
-          '<button class="btn btn-primary btn-block mt-16" onclick="closeSheet(); loadConnections();">Done</button>';
-        loadConnections();
-      } else if (data.result === 'host_key_changed') {
-        document.getElementById('sheet-content').innerHTML =
-          '<div class="host-key-warning">' +
-            '<div class="host-key-warning-title">⚠️ Server Identity Changed</div>' +
-            '<div class="host-key-warning-text">The server\'s host key has changed. This could indicate a server reinstall or a potential security issue.</div>' +
-            '<div class="host-key-fingerprints">' +
-              '<div class="host-key-fp-row"><span class="host-key-fp-label">Old:</span><span class="host-key-fp-value">' + escapeHtml(data.old_fingerprint || '?') + '</span></div>' +
-              '<div class="host-key-fp-row"><span class="host-key-fp-label">New:</span><span class="host-key-fp-value">' + escapeHtml(data.new_fingerprint || '?') + '</span></div>' +
-            '</div>' +
-            '<div class="host-key-actions">' +
-              '<button class="btn btn-primary" onclick="acceptHostKey(\'' + connId + '\')">Accept New Key</button>' +
-              '<button class="btn btn-secondary" onclick="closeSheet()">Cancel</button>' +
-            '</div>' +
-          '</div>';
+      if (data.connection && data.connection.keypair_id) {
+        showInstallKeySheet(data.connection);
       } else {
-        document.getElementById('sheet-content').innerHTML =
-          '<div class="test-result">' +
-            '<div class="test-result-icon">❌</div>' +
-            '<div class="test-result-title" style="color:var(--danger)">Connection Failed</div>' +
-            '<div class="test-result-detail" style="color:var(--text-secondary)">' + escapeHtml(data.message || 'Unknown error') + '</div>' +
-          '</div>' +
-          '<button class="btn btn-secondary btn-block mt-16" onclick="testConnection(\'' + connId + '\')">Retry</button>' +
-          '<button class="btn-text btn-block" onclick="closeSheet()">Close</button>';
         loadConnections();
       }
     } catch (err) {
-      document.getElementById('sheet-content').innerHTML =
-        '<div class="test-result">' +
-          '<div class="test-result-icon">❌</div>' +
-          '<div class="test-result-title" style="color:var(--danger)">Test Failed</div>' +
-          '<div class="test-result-detail" style="color:var(--text-secondary)">' + escapeHtml(err.message) + '</div>' +
-        '</div>' +
-        '<button class="btn btn-secondary btn-block mt-16" onclick="testConnection(\'' + connId + '\')">Retry</button>';
+      errEl.textContent = err.message;
+      errEl.hidden = false;
     }
-  };
+  }
 
-  window.acceptHostKey = async function (connId) {
+  // ── Install Key Sheet ──────────────────────────────────────────────
+  async function showInstallKeySheet(conn) {
+    openSheet("Install SSH Key");
+
+    sheetContent.innerHTML =
+      '<p style="color: var(--text-secondary); margin-bottom: 16px; font-size: 14px; line-height: 1.6;">' +
+        'Run this command on <strong>' + esc(conn.username + "@" + conn.host) + '</strong> to authorize Clawdfather\'s SSH key:' +
+      '</p>' +
+      '<div class="command-box" id="install-command-text">Loading...</div>' +
+      '<button class="btn btn-secondary btn-block mb-16" id="copy-install-cmd">Copy Command</button>' +
+      '<button class="btn btn-primary btn-block" id="install-done-btn">Done, Test Connection</button>';
+
     try {
-      var data = await api('POST', '/api/v1/connections/' + connId + '/test', { accept_host_key: true });
-      if (data && data.result === 'ok') {
-        showToast('Host key accepted and connection successful!', 'success');
+      var kpId = conn.keypair_id;
+      var data = await api("GET", "/keys/" + kpId + "/install-command");
+      $("install-command-text").textContent = data.command;
+
+      $("copy-install-cmd").addEventListener("click", function () {
+        navigator.clipboard.writeText(data.command).then(function () {
+          showToast("Command copied!", "success");
+        }).catch(function () {
+          showToast("Copy failed — select manually", "warning");
+        });
+      });
+    } catch (err) {
+      $("install-command-text").textContent = "Failed to load install command: " + err.message;
+    }
+
+    $("install-done-btn").addEventListener("click", function () {
+      closeSheet();
+      testConnection(conn.id);
+    });
+  }
+
+  // ── Delete Connection ──────────────────────────────────────────────
+  function confirmDeleteConnection(connId, label) {
+    closeSheet();
+    openSheet("Delete Connection");
+
+    sheetContent.innerHTML =
+      '<p class="confirm-text">Are you sure you want to delete <strong>' + esc(label) + '</strong>? This cannot be undone.</p>' +
+      '<div class="confirm-actions">' +
+        '<button class="btn btn-secondary" id="delete-cancel">Cancel</button>' +
+        '<button class="btn btn-danger-text" id="delete-confirm">Delete</button>' +
+      '</div>';
+
+    $("delete-cancel").addEventListener("click", closeSheet);
+    $("delete-confirm").addEventListener("click", async function () {
+      try {
+        await api("DELETE", "/connections/" + connId);
+        showToast("Connection deleted", "success");
         closeSheet();
         loadConnections();
-      } else {
-        showToast('Failed to accept host key', 'error');
+      } catch (err) {
+        showToast(err.message, "error");
       }
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  };
+    });
+  }
 
-  // ═══════════════════════════════════════════════════════════════════
-  // Delete Connection
-  // ═══════════════════════════════════════════════════════════════════
-
-  window.confirmDeleteConnection = function (conn) {
-    closeSheet();
-    setTimeout(function () {
-      showSheet('Delete Connection',
-        '<p class="confirm-text">Remove <strong>' + escapeHtml(conn.label) + '</strong>? This will delete the saved connection. The SSH key on the server will not be automatically removed.</p>' +
-        '<div class="confirm-actions">' +
-          '<button class="btn btn-secondary" onclick="closeSheet()">Cancel</button>' +
-          '<button class="btn btn-danger-text" onclick="deleteConnection(\'' + conn.id + '\')">Delete</button>' +
-        '</div>'
-      );
-    }, 350);
-  };
-
-  window.deleteConnection = async function (connId) {
-    try {
-      await api('DELETE', '/api/v1/connections/' + connId);
-      closeSheet();
-      showToast('Connection removed', 'success');
-      loadConnections();
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  };
-
-  // ═══════════════════════════════════════════════════════════════════
-  // Sessions
-  // ═══════════════════════════════════════════════════════════════════
-
+  // ── Sessions ───────────────────────────────────────────────────────
   async function loadSessions() {
-    var loadingEl = document.getElementById('sessions-loading');
-    var emptyEl = document.getElementById('sessions-empty');
-    var listEl = document.getElementById('sessions-list');
-
-    loadingEl.hidden = false;
-    emptyEl.hidden = true;
-    listEl.hidden = true;
+    sessionsLoading.hidden = false;
+    sessionsEmpty.hidden = true;
+    sessionsList.hidden = true;
 
     try {
-      var data = await api('GET', '/api/v1/sessions');
-      if (!data) return;
-
-      state.sessions = data.sessions || [];
-      loadingEl.hidden = true;
-
-      if (state.sessions.length === 0) {
-        emptyEl.hidden = false;
-      } else {
-        listEl.hidden = false;
-        renderSessions();
-      }
+      var data = await api("GET", "/sessions");
+      sessions = data.sessions || [];
     } catch (err) {
-      loadingEl.hidden = true;
-      showToast('Failed to load sessions: ' + err.message, 'error');
+      sessionsLoading.hidden = true;
+      showToast("Failed to load sessions: " + err.message, "error");
+      return;
+    }
+
+    sessionsLoading.hidden = true;
+    if (sessions.length === 0) {
+      sessionsEmpty.hidden = false;
+    } else {
+      sessionsList.hidden = false;
+      renderSessions();
     }
   }
 
   function renderSessions() {
-    var listEl = document.getElementById('sessions-list');
-    listEl.innerHTML = '';
+    sessionsList.innerHTML = "";
+    sessions.forEach(function (sess) {
+      var isActive = sess.status === "active" || sess.status === "pending";
+      var pillClass = isActive ? "pill-active" : (sess.status === "error" ? "pill-danger" : "pill-gray");
+      var connLabel = (sess.connection && sess.connection.label) || "Unknown";
+      var connHost = (sess.connection && sess.connection.host) || "";
 
-    state.sessions.forEach(function (sess) {
-      var card = document.createElement('div');
-      card.className = 'session-card';
-
-      var isActive = sess.status === 'active';
-      var pillClass = isActive ? 'pill-active' : 'pill-gray';
-      var pillText = isActive ? '● Active' : sess.status;
-
-      var connLabel = (sess.connection && sess.connection.label) || 'Unknown';
-      var connHost = (sess.connection && sess.connection.host) || '';
-
-      var endBtnHtml = '';
-      if (isActive) {
-        endBtnHtml = '<button class="btn btn-danger-sm" onclick="event.stopPropagation(); endSession(\'' + sess.id + '\')">End Session</button>';
-      }
-
+      var card = document.createElement("div");
+      card.className = "session-card";
       card.innerHTML =
         '<div class="session-card-header">' +
-          '<span class="session-card-label">' + escapeHtml(connLabel) + '</span>' +
-          '<span class="pill ' + pillClass + '">' + pillText + '</span>' +
+          '<span class="session-card-label">' + esc(connLabel) + '</span>' +
+          '<span class="pill ' + pillClass + '">' + esc(sess.status) + '</span>' +
         '</div>' +
-        '<div class="session-card-host">' + escapeHtml(connHost) + '</div>' +
+        '<div class="session-card-host">' + esc(connHost) + '</div>' +
         '<div class="session-card-footer">' +
-          '<span class="card-time">' + (sess.started_at ? formatRelativeTime(sess.started_at) : '') + '</span>' +
-          endBtnHtml +
+          '<span class="card-time">' + (sess.started_at ? timeAgo(sess.started_at) : "") + '</span>' +
+          (isActive ? '<button class="btn btn-primary">Open Chat</button>' : '') +
         '</div>';
 
       if (isActive) {
-        card.onclick = function () { openChat(sess); };
+        card.addEventListener("click", function () {
+          openChat(sess);
+        });
       }
 
-      listEl.appendChild(card);
+      sessionsList.appendChild(card);
     });
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  // Start Session
-  // ═══════════════════════════════════════════════════════════════════
-
-  window.startSession = async function (connectionId) {
+  // ── Start Session ──────────────────────────────────────────────────
+  async function startSession(connectionId) {
     closeSheet();
-    showToast('Starting session...', 'info');
+    closeContextMenu();
+    showToast("Starting session...", "info");
 
     try {
-      var data = await api('POST', '/api/v1/sessions', { connection_id: connectionId });
-      if (!data || !data.session) return;
-
-      showToast('Session started!', 'success');
+      var data = await api("POST", "/sessions", { connection_id: connectionId });
+      showToast("Session started", "success");
       openChat(data.session);
     } catch (err) {
-      showToast('Failed to start session: ' + err.message, 'error');
+      showToast(err.message, "error");
     }
-  };
+  }
 
-  window.endSession = async function (sessionId) {
-    try {
-      await api('DELETE', '/api/v1/sessions/' + sessionId);
-      showToast('Session ended', 'success');
-      loadSessions();
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  };
-
-  // ═══════════════════════════════════════════════════════════════════
-  // Chat View
-  // ═══════════════════════════════════════════════════════════════════
-
+  // ── Chat View ──────────────────────────────────────────────────────
   function openChat(session) {
-    state.activeChatSession = session;
+    chatSessionId = session.id;
+    chatStartedAt = session.started_at ? new Date(session.started_at) : new Date();
 
-    var chatView = document.getElementById('view-chat');
-    var bottomNav = document.getElementById('bottom-nav');
+    var label = (session.connection && session.connection.label) || "Session";
+    chatConnectionLabel.textContent = label;
+    chatMessages.innerHTML = "";
+    chatInput.value = "";
+    chatInput.disabled = false;
+    btnChatSend.disabled = false;
 
-    document.getElementById('chat-connection-label').textContent =
-      (session.connection && session.connection.label) || 'Session';
-
-    document.getElementById('chat-messages').innerHTML = '';
-
-    chatView.style.display = 'flex';
+    viewConnections.hidden = true;
+    viewSessions.hidden = true;
+    viewSettings.hidden = true;
+    viewChat.hidden = false;
+    viewChat.style.display = "flex";
+    viewChat.classList.add("active-chat");
     bottomNav.hidden = true;
 
-    state.chatStartedAt = session.started_at ? new Date(session.started_at) : new Date();
-    startChatTimer();
+    updateChatTimer();
+    chatTimerInterval = setInterval(updateChatTimer, 1000);
 
-    addChatMessage('system', 'Connecting to session...');
-    connectChat(session.id);
+    addChatSystemMessage("Connecting to session...");
+    connectWs(chatSessionId);
   }
 
   window.exitChat = function () {
-    disconnectChat();
-
-    var chatView = document.getElementById('view-chat');
-    var bottomNav = document.getElementById('bottom-nav');
-
-    chatView.style.display = 'none';
-    bottomNav.hidden = false;
-
-    state.activeChatSession = null;
-
-    if (state.activeView === 'sessions') loadSessions();
+    disconnectWs();
+    viewChat.hidden = true;
+    viewChat.style.display = "";
+    viewChat.classList.remove("active-chat");
+    if (chatTimerInterval) {
+      clearInterval(chatTimerInterval);
+      chatTimerInterval = null;
+    }
+    chatSessionId = null;
+    navigate(currentView);
   };
 
   window.endCurrentSession = function () {
-    if (!state.activeChatSession) return;
-
-    showSheet('End Session?',
+    if (!chatSessionId) return;
+    openSheet("End Session");
+    sheetContent.innerHTML =
       '<p class="confirm-text">End this session? The SSH connection will be closed.</p>' +
       '<div class="confirm-actions">' +
-        '<button class="btn btn-secondary" onclick="closeSheet()">Cancel</button>' +
-        '<button class="btn btn-danger-text" onclick="confirmEndSession()">End Session</button>' +
-      '</div>'
-    );
+        '<button class="btn btn-secondary" id="end-cancel">Cancel</button>' +
+        '<button class="btn btn-danger-text" id="end-confirm">End Session</button>' +
+      '</div>';
+
+    $("end-cancel").addEventListener("click", closeSheet);
+    $("end-confirm").addEventListener("click", async function () {
+      closeSheet();
+      try {
+        await api("DELETE", "/sessions/" + chatSessionId);
+        showToast("Session ended", "success");
+        exitChat();
+      } catch (err) {
+        showToast(err.message, "error");
+      }
+    });
   };
-
-  window.confirmEndSession = async function () {
-    if (!state.activeChatSession) return;
-    var sessId = state.activeChatSession.id;
-    closeSheet();
-
-    try {
-      await api('DELETE', '/api/v1/sessions/' + sessId);
-      showToast('Session ended', 'success');
-      exitChat();
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  };
-
-  function startChatTimer() {
-    if (state.chatTimer) clearInterval(state.chatTimer);
-    updateChatTimer();
-    state.chatTimer = setInterval(updateChatTimer, 1000);
-  }
 
   function updateChatTimer() {
-    if (!state.chatStartedAt) return;
-    var elapsed = Math.floor((Date.now() - state.chatStartedAt.getTime()) / 1000);
+    if (!chatStartedAt) return;
+    var elapsed = Math.floor((Date.now() - chatStartedAt.getTime()) / 1000);
     var h = Math.floor(elapsed / 3600);
     var m = Math.floor((elapsed % 3600) / 60);
     var s = elapsed % 60;
-
-    var timerEl = document.getElementById('chat-timer');
-    if (timerEl) {
-      timerEl.textContent = (h > 0 ? h + ':' : '') +
-        (m < 10 ? '0' : '') + m + ':' +
-        (s < 10 ? '0' : '') + s;
-    }
+    chatTimer.textContent =
+      (h > 0 ? pad(h) + ":" : "") + pad(m) + ":" + pad(s);
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  // Chat WebSocket
-  // ═══════════════════════════════════════════════════════════════════
+  function pad(n) { return n < 10 ? "0" + n : String(n); }
 
-  var chatHeartbeatInterval = null;
-  var chatReconnectTimer = null;
-  var chatReconnectDelay = 1000;
-  var chatAuthenticated = false;
+  // ── Chat Messages ──────────────────────────────────────────────────
+  function addChatMessage(role, text) {
+    var div = document.createElement("div");
+    div.className = "chat-msg " + role;
 
-  function connectChat(sessionId) {
-    disconnectChat();
+    var header = document.createElement("div");
+    header.className = "chat-msg-header";
 
-    var proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var sender = document.createElement("span");
+    sender.className = "chat-msg-sender " + role;
+    sender.textContent = role === "user" ? "You" : role === "assistant" ? "Clawdfather" : "System";
+
+    var time = document.createElement("span");
+    time.className = "chat-msg-time";
+    time.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+    header.appendChild(sender);
+    header.appendChild(time);
+
+    var body = document.createElement("div");
+    body.className = "chat-msg-body";
+    body.innerHTML = renderMarkdown(text);
+
+    body.querySelectorAll("pre").forEach(function (pre) {
+      var btn = document.createElement("button");
+      btn.className = "copy-btn";
+      btn.textContent = "copy";
+      btn.style.cssText = "position:absolute;top:6px;right:8px;background:var(--card);border:1px solid var(--border);border-radius:4px;color:var(--text-secondary);font-size:11px;padding:2px 8px;cursor:pointer;";
+      btn.onclick = function () {
+        var code = pre.querySelector("code");
+        navigator.clipboard.writeText(code ? code.textContent : pre.textContent);
+        btn.textContent = "copied!";
+        setTimeout(function () { btn.textContent = "copy"; }, 1500);
+      };
+      pre.style.position = "relative";
+      pre.appendChild(btn);
+    });
+
+    div.appendChild(header);
+    div.appendChild(body);
+    chatMessages.appendChild(div);
+    scrollChat();
+  }
+
+  function addChatSystemMessage(text) { addChatMessage("system", text); }
+
+  function showThinking() {
+    if (isThinking) return;
+    isThinking = true;
+    var div = document.createElement("div");
+    div.className = "chat-thinking";
+    div.id = "thinking-indicator";
+    div.innerHTML = '<div class="thinking-dots"><span></span><span></span><span></span></div> Thinking...';
+    chatMessages.appendChild(div);
+    scrollChat();
+  }
+
+  function removeThinking() {
+    isThinking = false;
+    var el = $("thinking-indicator");
+    if (el) el.remove();
+  }
+
+  function scrollChat() {
+    requestAnimationFrame(function () {
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    });
+  }
+
+  // ── Chat Input ─────────────────────────────────────────────────────
+  window.sendChatMessage = function () {
+    var text = chatInput.value.trim();
+    if (!text || !wsAuthenticated) return;
+
+    addChatMessage("user", text);
+    ws.send(JSON.stringify({ type: "message", text: text }));
+    chatInput.value = "";
+    chatInput.style.height = "auto";
+  };
+
+  chatInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendChatMessage();
+    }
+  });
+
+  chatInput.addEventListener("input", function () {
+    this.style.height = "auto";
+    this.style.height = Math.min(this.scrollHeight, 120) + "px";
+  });
+
+  // ── WebSocket ──────────────────────────────────────────────────────
+  function connectWs(sessionId) {
+    disconnectWs();
+    wsAuthenticated = false;
+
+    var proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     var host = window.location.host;
-    var wsUrl = proto + '//' + host + '/ws/sessions/' + sessionId;
+    var wsUrl = proto + "//" + host + "/ws/sessions/" + sessionId;
 
-    var ws = new WebSocket(wsUrl);
-    state.chatWs = ws;
+    ws = new WebSocket(wsUrl);
 
     ws.onopen = function () {
-      ws.send(JSON.stringify({ type: 'auth', token: state.token }));
-
-      chatHeartbeatInterval = setInterval(function () {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'heartbeat' }));
-        }
-      }, 30000);
+      ws.send(JSON.stringify({ type: "auth", token: token, session_id: sessionId }));
     };
 
     ws.onmessage = function (event) {
       try {
         var msg = JSON.parse(event.data);
-        handleChatMessage(msg);
+        handleWsMessage(msg);
       } catch (e) {
-        console.error('Failed to parse WS message:', e);
+        console.error("WS parse error:", e);
       }
     };
 
     ws.onclose = function (event) {
-      chatAuthenticated = false;
-      clearInterval(chatHeartbeatInterval);
-      chatHeartbeatInterval = null;
-
+      wsAuthenticated = false;
+      stopHeartbeat();
       if (event.code === 4001) {
-        addChatMessage('system', 'Session has ended.');
-      } else if (state.activeChatSession && state.activeChatSession.id === sessionId) {
-        addChatMessage('system', 'Connection lost. Reconnecting...');
-        scheduleChatReconnect(sessionId);
+        addChatSystemMessage("Session has ended.");
+        chatInput.disabled = true;
+        btnChatSend.disabled = true;
+      } else if (chatSessionId === sessionId) {
+        addChatSystemMessage("Disconnected. Attempting to reconnect...");
+        setTimeout(function () {
+          if (chatSessionId === sessionId) connectWs(sessionId);
+        }, 2000);
       }
     };
 
     ws.onerror = function () {};
   }
 
-  function scheduleChatReconnect(sessionId) {
-    if (chatReconnectTimer) return;
-    chatReconnectTimer = setTimeout(function () {
-      chatReconnectTimer = null;
-      chatReconnectDelay = Math.min(chatReconnectDelay * 2, 30000);
-      if (state.activeChatSession && state.activeChatSession.id === sessionId) {
-        connectChat(sessionId);
-      }
-    }, chatReconnectDelay);
+  function disconnectWs() {
+    stopHeartbeat();
+    wsAuthenticated = false;
+    if (ws) {
+      try { ws.close(); } catch (e) {}
+      ws = null;
+    }
   }
 
-  function disconnectChat() {
-    if (state.chatWs) {
-      state.chatWs.onclose = null;
-      state.chatWs.close();
-      state.chatWs = null;
-    }
-    if (chatHeartbeatInterval) {
-      clearInterval(chatHeartbeatInterval);
-      chatHeartbeatInterval = null;
-    }
-    if (chatReconnectTimer) {
-      clearTimeout(chatReconnectTimer);
-      chatReconnectTimer = null;
-    }
-    if (state.chatTimer) {
-      clearInterval(state.chatTimer);
-      state.chatTimer = null;
-    }
-    chatReconnectDelay = 1000;
-    chatAuthenticated = false;
-  }
-
-  function handleChatMessage(msg) {
+  function handleWsMessage(msg) {
     switch (msg.type) {
-      case 'session':
-        chatAuthenticated = true;
-        chatReconnectDelay = 1000;
-        removeChatThinking();
-        addChatMessage('system', 'Connected to ' +
-          (msg.connection ? msg.connection.label + ' (' + msg.connection.host + ')' : 'session'));
+      case "session":
+        wsAuthenticated = true;
+        removeThinking();
+        addChatSystemMessage("Connected" + (msg.connection ? " to " + msg.connection.label : ""));
+        startHeartbeat();
         break;
 
-      case 'message':
-        removeChatThinking();
-        if (msg.role === 'assistant') {
-          addChatMessage('assistant', msg.text || '');
+      case "auth_ok":
+        wsAuthenticated = true;
+        startHeartbeat();
+        break;
+
+      case "message":
+        removeThinking();
+        if (msg.role === "assistant") {
+          addChatMessage("assistant", msg.text || "");
+        } else if (msg.role === "user") {
+          // already shown locally
+        } else {
+          addChatMessage("system", msg.text || "");
         }
         break;
 
-      case 'status':
-        if (msg.status === 'thinking') {
-          showChatThinking();
-        } else if (msg.status === 'done') {
-          removeChatThinking();
-        }
+      case "status":
+        if (msg.status === "thinking") showThinking();
+        else if (msg.status === "done") removeThinking();
         break;
 
-      case 'heartbeat_ack':
+      case "error":
+        removeThinking();
+        addChatSystemMessage("Error: " + (msg.message || "Unknown error"));
         break;
 
-      case 'error':
-        removeChatThinking();
-        addChatMessage('system', 'Error: ' + (msg.message || 'Unknown error'));
+      case "heartbeat_ack":
         break;
 
-      case 'session_closed':
-        removeChatThinking();
-        addChatMessage('system', msg.message || 'Session closed: ' + (msg.reason || 'unknown'));
-        break;
+      default:
+        console.log("Unknown WS message:", msg.type);
     }
   }
 
-  function addChatMessage(role, text) {
-    var container = document.getElementById('chat-messages');
-    var div = document.createElement('div');
-    div.className = 'chat-msg ' + role;
-
-    var senderName = role === 'user' ? 'You' : role === 'assistant' ? '🦞 Clawdfather' : 'System';
-    var time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-    div.innerHTML =
-      '<div class="chat-msg-header">' +
-        '<span class="chat-msg-sender ' + role + '">' + senderName + '</span>' +
-        '<span class="chat-msg-time">' + time + '</span>' +
-      '</div>' +
-      '<div class="chat-msg-body">' + renderMarkdown(text) + '</div>';
-
-    container.appendChild(div);
-    scrollChatToBottom();
-  }
-
-  function showChatThinking() {
-    if (document.getElementById('chat-thinking')) return;
-    var container = document.getElementById('chat-messages');
-    var div = document.createElement('div');
-    div.className = 'chat-thinking';
-    div.id = 'chat-thinking';
-    div.innerHTML = '<div class="thinking-dots"><span></span><span></span><span></span></div> Thinking...';
-    container.appendChild(div);
-    scrollChatToBottom();
-  }
-
-  function removeChatThinking() {
-    var el = document.getElementById('chat-thinking');
-    if (el) el.remove();
-  }
-
-  function scrollChatToBottom() {
-    var container = document.getElementById('chat-messages');
-    requestAnimationFrame(function () {
-      container.scrollTop = container.scrollHeight;
-    });
-  }
-
-  window.sendChatMessage = function () {
-    var input = document.getElementById('chat-input');
-    var text = input.value.trim();
-    if (!text || !chatAuthenticated || !state.chatWs) return;
-
-    addChatMessage('user', text);
-    state.chatWs.send(JSON.stringify({ type: 'message', text: text }));
-    input.value = '';
-    input.style.height = 'auto';
-  };
-
-  // Chat input: Enter to send, Shift+Enter for newline
-  document.addEventListener('DOMContentLoaded', function () {
-    var chatInput = document.getElementById('chat-input');
-    if (chatInput) {
-      chatInput.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
-          e.preventDefault();
-          sendChatMessage();
-        }
-      });
-      chatInput.addEventListener('input', function () {
-        this.style.height = 'auto';
-        this.style.height = Math.min(this.scrollHeight, 120) + 'px';
-      });
-    }
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // Settings
-  // ═══════════════════════════════════════════════════════════════════
-
-  async function loadSettings() {
-    updateAccountUI();
-    loadKeypairs();
-    loadVersion();
-  }
-
-  async function loadKeypairs() {
-    var listEl = document.getElementById('keys-list');
-    listEl.innerHTML = '<div class="loading-state" style="min-height:100px;padding:20px"><div class="spinner"></div></div>';
-
-    try {
-      var data = await api('GET', '/api/v1/keys');
-      if (!data) return;
-
-      state.keypairs = data.keypairs || [];
-
-      if (state.keypairs.length === 0) {
-        listEl.innerHTML = '<p class="text-muted text-center" style="padding:20px;font-size:14px">No keys generated yet.</p>';
-        return;
+  function startHeartbeat() {
+    stopHeartbeat();
+    heartbeatTimer = setInterval(function () {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "heartbeat" }));
       }
+    }, 30000);
+  }
 
-      listEl.innerHTML = '';
-      state.keypairs.forEach(function (key) {
-        var item = document.createElement('div');
-        item.className = 'key-item';
-        item.onclick = function () { showKeyDetail(key); };
+  function stopHeartbeat() {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+  }
 
-        var statusPill = key.is_active ?
-          '<span class="pill pill-success">Active</span>' :
-          '<span class="pill pill-gray">Revoked</span>';
+  // ── Settings ───────────────────────────────────────────────────────
+  async function loadSettings() {
+    renderSettings();
+    await loadKeys();
+  }
 
-        item.innerHTML =
-          '<div class="key-item-header">' +
-            '<span class="key-item-label">' + escapeHtml(key.label) + '</span>' +
-            statusPill +
-          '</div>' +
-          '<div class="key-item-fingerprint">' + escapeHtml(key.fingerprint) + '</div>';
+  function renderSettings() {
+    if (!account) return;
+    settingsDisplayName.textContent = account.display_name || "—";
+    settingsEmail.textContent = account.email || "No email";
+    settingsVersion.textContent = VERSION;
 
-        listEl.appendChild(item);
+    var initial = (account.display_name || "?")[0].toUpperCase();
+    settingsAvatar.textContent = initial;
+  }
+
+  async function loadKeys() {
+    keysList.innerHTML = '<div class="loading-state" style="padding: 24px 0;"><div class="spinner"></div></div>';
+    try {
+      var data = await api("GET", "/keys");
+      keypairs = data.keypairs || [];
+      renderKeys();
+    } catch (err) {
+      keysList.innerHTML = '<p style="padding: 16px; color: var(--text-secondary);">Failed to load keys</p>';
+    }
+  }
+
+  function renderKeys() {
+    if (keypairs.length === 0) {
+      keysList.innerHTML = '<p style="padding: 16px; color: var(--text-secondary);">No SSH keys yet.</p>';
+      return;
+    }
+
+    keysList.innerHTML = "";
+    keypairs.forEach(function (kp) {
+      var item = document.createElement("div");
+      item.className = "key-item";
+      item.innerHTML =
+        '<div class="key-item-header">' +
+          '<span class="key-item-label">' + esc(kp.label) + '</span>' +
+          '<span class="pill ' + (kp.is_active ? "pill-success" : "pill-gray") + '">' + (kp.is_active ? "Active" : "Revoked") + '</span>' +
+        '</div>' +
+        '<div class="key-item-fingerprint">' + esc(kp.fingerprint || "") + '</div>';
+
+      item.addEventListener("click", function () {
+        showKeyDetail(kp);
       });
-    } catch (err) {
-      listEl.innerHTML = '<p class="text-danger text-center" style="padding:20px;font-size:14px">Failed to load keys</p>';
-    }
-  }
 
-  function showKeyDetail(key) {
-    var revokeHtml = key.is_active ?
-      '<button class="detail-delete" onclick="revokeKey(\'' + key.id + '\')">Revoke Key</button>' : '';
-
-    showSheet(key.label,
-      '<div class="detail-row"><span class="detail-label">Algorithm</span><span class="detail-value">' + escapeHtml(key.algorithm || 'ed25519') + '</span></div>' +
-      '<div class="detail-row"><span class="detail-label">Status</span><span>' +
-        (key.is_active ? '<span class="pill pill-success">Active</span>' : '<span class="pill pill-gray">Revoked</span>') +
-      '</span></div>' +
-      '<div class="detail-row" style="flex-direction:column;align-items:flex-start;gap:4px">' +
-        '<span class="detail-label">Fingerprint</span>' +
-        '<span class="detail-value" style="max-width:100%;font-size:12px">' + escapeHtml(key.fingerprint) + '</span>' +
-      '</div>' +
-      (key.public_key ?
-        '<div style="margin-top:16px">' +
-          '<span class="detail-label" style="display:block;margin-bottom:6px">Public Key</span>' +
-          '<div class="command-box" style="font-size:11px">' + escapeHtml(key.public_key) + '</div>' +
-          '<button class="btn btn-secondary btn-block" onclick="copyText(\'' + escapeHtml(key.public_key).replace(/'/g, "\\'") + '\')">📋 Copy Public Key</button>' +
-        '</div>' : '') +
-      revokeHtml
-    );
-  }
-
-  window.copyText = function (text) {
-    navigator.clipboard.writeText(text).then(function () {
-      showToast('Copied to clipboard!', 'success');
-    }).catch(function () {
-      showToast('Failed to copy', 'warning');
+      keysList.appendChild(item);
     });
-  };
+  }
 
-  window.revokeKey = async function (keyId) {
-    closeSheet();
-    await new Promise(function (r) { setTimeout(r, 350); });
+  function showKeyDetail(kp) {
+    openSheet(esc(kp.label));
+    sheetContent.innerHTML =
+      '<div class="detail-row"><span class="detail-label">Algorithm</span><span class="detail-value">' + esc(kp.algorithm || "ed25519") + '</span></div>' +
+      '<div class="detail-row"><span class="detail-label">Fingerprint</span><span class="detail-value">' + esc(kp.fingerprint || "") + '</span></div>' +
+      '<div class="detail-row"><span class="detail-label">Status</span><span class="pill ' + (kp.is_active ? "pill-success" : "pill-gray") + '">' + (kp.is_active ? "Active" : "Revoked") + '</span></div>' +
+      '<div class="detail-row"><span class="detail-label">Created</span><span class="detail-value">' + esc(timeAgo(kp.created_at)) + '</span></div>' +
+      '<div class="detail-actions">' +
+        '<button class="btn btn-secondary" id="key-install-btn">Install Command</button>' +
+        (kp.is_active ? '<button class="btn btn-danger-text" id="key-revoke-btn">Revoke Key</button>' : '') +
+      '</div>';
 
-    showSheet('Revoke Key?',
-      '<p class="confirm-text">Revoke this key? Active sessions using it will be terminated. You\'ll need to generate a new key and install it on your servers.</p>' +
-      '<div class="confirm-actions">' +
-        '<button class="btn btn-secondary" onclick="closeSheet()">Cancel</button>' +
-        '<button class="btn btn-danger-text" onclick="confirmRevokeKey(\'' + keyId + '\')">Revoke</button>' +
-      '</div>'
-    );
-  };
+    $("key-install-btn").addEventListener("click", async function () {
+      try {
+        var data = await api("GET", "/keys/" + kp.id + "/install-command");
+        closeSheet();
+        openSheet("Install Command");
+        sheetContent.innerHTML =
+          '<div class="command-box">' + esc(data.command) + '</div>' +
+          '<button class="btn btn-secondary btn-block" id="copy-key-cmd">Copy Command</button>' +
+          '<button class="btn btn-primary btn-block mt-12" id="key-cmd-done">Done</button>';
 
-  window.confirmRevokeKey = async function (keyId) {
-    try {
-      await api('DELETE', '/api/v1/keys/' + keyId);
-      closeSheet();
-      showToast('Key revoked', 'success');
-      loadKeypairs();
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  };
+        $("copy-key-cmd").addEventListener("click", function () {
+          navigator.clipboard.writeText(data.command).then(function () {
+            showToast("Copied!", "success");
+          }).catch(function () {
+            showToast("Copy failed", "warning");
+          });
+        });
+        $("key-cmd-done").addEventListener("click", closeSheet);
+      } catch (err) {
+        showToast(err.message, "error");
+      }
+    });
 
-  document.addEventListener('DOMContentLoaded', function () {
-    var genKeyBtn = document.getElementById('btn-generate-key');
-    if (genKeyBtn) {
-      genKeyBtn.onclick = async function () {
-        showSheet('Generate New Key',
-          '<form onsubmit="return false">' +
-            '<div class="form-group">' +
-              '<label class="form-label">Key Label</label>' +
-              '<input class="form-input" id="new-key-label" type="text" placeholder="e.g. mobile-key" value="default" autocomplete="off">' +
-            '</div>' +
-            '<div id="gen-key-error" class="form-error" hidden></div>' +
-            '<button class="btn btn-primary btn-block mt-16" onclick="submitGenerateKey()">Generate Key</button>' +
-          '</form>'
-        );
-      };
-    }
-  });
-
-  window.submitGenerateKey = async function () {
-    var label = document.getElementById('new-key-label').value.trim() || 'default';
-    var errorEl = document.getElementById('gen-key-error');
-    errorEl.hidden = true;
-
-    try {
-      var data = await api('POST', '/api/v1/keys', { label: label });
-      if (!data) return;
-      closeSheet();
-      showToast('Key generated!', 'success');
-      loadKeypairs();
-    } catch (err) {
-      errorEl.textContent = err.message;
-      errorEl.hidden = false;
-    }
-  };
-
-  async function loadVersion() {
-    try {
-      var res = await fetch('/api/version');
-      var data = await res.json();
-      var el = document.getElementById('settings-version');
-      if (el) el.textContent = 'v' + data.version + (data.commit ? ' (' + data.commit + ')' : '');
-    } catch (e) {
-      /* ignore */
+    var revokeBtn = $("key-revoke-btn");
+    if (revokeBtn) {
+      revokeBtn.addEventListener("click", async function () {
+        try {
+          await api("DELETE", "/keys/" + kp.id);
+          showToast("Key revoked", "success");
+          closeSheet();
+          loadKeys();
+        } catch (err) {
+          showToast(err.message, "error");
+        }
+      });
     }
   }
 
-  // Sign out button
-  document.addEventListener('DOMContentLoaded', function () {
-    var signOutBtn = document.getElementById('btn-sign-out');
-    if (signOutBtn) signOutBtn.onclick = logout;
+  // ── Generate Key ───────────────────────────────────────────────────
+  btnGenerateKey.addEventListener("click", function () {
+    openSheet("Generate SSH Key");
+    sheetContent.innerHTML =
+      '<form id="gen-key-form">' +
+        '<div class="form-group">' +
+          '<label class="form-label">Label</label>' +
+          '<input class="form-input" id="key-label-input" placeholder="default" value="default" autocomplete="off">' +
+        '</div>' +
+        '<div id="key-gen-error" class="form-error" hidden></div>' +
+        '<button type="submit" class="btn btn-primary btn-block mt-16">Generate Key</button>' +
+      '</form>';
+
+    $("gen-key-form").addEventListener("submit", async function (e) {
+      e.preventDefault();
+      var label = $("key-label-input").value.trim() || "default";
+      var errEl = $("key-gen-error");
+      errEl.hidden = true;
+
+      try {
+        var data = await api("POST", "/keys", { label: label });
+        showToast("Key generated", "success");
+        closeSheet();
+        loadKeys();
+
+        keypairs.push(data.keypair);
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.hidden = false;
+      }
+    });
   });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // Simple Markdown Renderer
-  // ═══════════════════════════════════════════════════════════════════
+  // ── Sign Out ───────────────────────────────────────────────────────
+  btnSignOut.addEventListener("click", function () {
+    openSheet("Sign Out");
+    sheetContent.innerHTML =
+      '<p class="confirm-text">Are you sure you want to sign out?</p>' +
+      '<div class="confirm-actions">' +
+        '<button class="btn btn-secondary" id="signout-cancel">Cancel</button>' +
+        '<button class="btn btn-danger-text" id="signout-confirm">Sign Out</button>' +
+      '</div>';
 
+    $("signout-cancel").addEventListener("click", closeSheet);
+    $("signout-confirm").addEventListener("click", function () {
+      closeSheet();
+      logout();
+    });
+  });
+
+  // ── Bottom Sheet ───────────────────────────────────────────────────
+  function openSheet(title) {
+    sheetTitle.textContent = title;
+    sheetContent.innerHTML = "";
+    sheetBackdrop.hidden = false;
+    sheet.hidden = false;
+    requestAnimationFrame(function () {
+      sheetBackdrop.classList.add("visible");
+      sheet.classList.add("visible");
+    });
+  }
+
+  window.closeSheet = function () {
+    sheetBackdrop.classList.remove("visible");
+    sheet.classList.remove("visible");
+    setTimeout(function () {
+      sheetBackdrop.hidden = true;
+      sheet.hidden = true;
+      sheetContent.innerHTML = "";
+    }, 300);
+  };
+
+  sheetBackdrop.addEventListener("click", closeSheet);
+
+  // ── Markdown Renderer ──────────────────────────────────────────────
   function renderMarkdown(text) {
-    if (!text) return '';
+    if (!text) return "";
 
     var html = text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
 
     html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function (_, lang, code) {
-      return '<pre><code class="language-' + (lang || 'text') + '">' + code.trim() + '</code></pre>';
+      return '<pre><code class="language-' + (lang || "text") + '">' + code.trim() + "</code></pre>";
     });
 
-    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+    html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
     html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-    html = html.replace(/\n/g, '<br>');
+    html = html.replace(/\n/g, "<br>");
 
     html = html.replace(/<pre><code([^>]*)>([\s\S]*?)<\/code><\/pre>/g, function (match) {
-      return match.replace(/<br>/g, '\n');
+      return match.replace(/<br>/g, "\n");
     });
 
     return html;
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  // Utilities
-  // ═══════════════════════════════════════════════════════════════════
-
-  function escapeHtml(str) {
-    if (!str) return '';
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
+  // ── Utilities ──────────────────────────────────────────────────────
+  function esc(str) {
+    if (!str) return "";
+    var div = document.createElement("div");
+    div.appendChild(document.createTextNode(String(str)));
+    return div.innerHTML;
   }
 
-  function formatRelativeTime(isoStr) {
-    if (!isoStr) return '';
-    var date = new Date(isoStr);
-    var now = new Date();
-    var diffSec = Math.floor((now - date) / 1000);
+  function timeAgo(dateStr) {
+    if (!dateStr) return "";
+    var now = Date.now();
+    var then = new Date(dateStr).getTime();
+    var diff = Math.floor((now - then) / 1000);
 
-    if (diffSec < 60) return 'just now';
-    if (diffSec < 3600) return Math.floor(diffSec / 60) + 'm ago';
-    if (diffSec < 86400) return Math.floor(diffSec / 3600) + 'h ago';
-    if (diffSec < 604800) return Math.floor(diffSec / 86400) + 'd ago';
-    return date.toLocaleDateString();
+    if (diff < 60) return "just now";
+    if (diff < 3600) return Math.floor(diff / 60) + "m ago";
+    if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
+    return Math.floor(diff / 86400) + "d ago";
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  // Initialization
-  // ═══════════════════════════════════════════════════════════════════
+  // ── Init ───────────────────────────────────────────────────────────
+  function init() {
+    var params = new URLSearchParams(window.location.search);
+    var code = params.get("code");
+    var state = params.get("state");
 
-  async function init() {
-    // Check for OAuth callback params first
-    var oauthSuccess = await handleOAuthCallback();
-    if (oauthSuccess) {
-      showAppShell();
-      loadAccount();
+    if (code && state) {
+      handleOAuthCallback(code, state);
       return;
     }
 
-    // Check if we have a stored token
-    if (state.token) {
-      try {
-        var data = await api('GET', '/api/v1/auth/me');
-        if (data && data.account) {
-          state.account = data.account;
-          showAppShell();
-          updateAccountUI();
-          return;
-        }
-      } catch (err) {
-        // Token invalid, clear and show auth
-        state.token = null;
-        localStorage.removeItem('clf_token');
-      }
+    if (token) {
+      bootApp();
+    } else {
+      showAuthScreen();
     }
-
-    showAuthScreen();
   }
 
-  // GitHub login button
-  document.addEventListener('DOMContentLoaded', function () {
-    var loginBtn = document.getElementById('btn-github-login');
-    if (loginBtn) loginBtn.onclick = startOAuth;
-  });
+  btnGithubLogin.addEventListener("click", startGitHubOAuth);
 
-  // Start the app
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
-
+  init();
 })();
