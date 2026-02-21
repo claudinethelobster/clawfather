@@ -84,8 +84,8 @@
 
     const data = await res.json();
     if (!res.ok) {
-      const msg = data.message || data.error || "Request failed";
-      throw Object.assign(new Error(msg), { status: res.status, code: data.code, data });
+      const msg = (data.error && data.error.message) || data.message || "Request failed";
+      throw Object.assign(new Error(msg), { status: res.status, code: (data.error && data.error.code) || data.code, data });
     }
     return data;
   }
@@ -144,20 +144,29 @@
 
   async function handleOAuthCallback(code, state) {
     showAuthScreen();
+    window.history.replaceState(null, "", window.location.pathname);
     try {
       var res = await fetch(
-        API + "/auth/oauth/github/callback?code=" + encodeURIComponent(code) + "&state=" + encodeURIComponent(state)
+        API + "/auth/oauth/github/callback?code=" + encodeURIComponent(code) + "&state=" + encodeURIComponent(state),
+        { credentials: "include" }
       );
-      var data = await res.json();
-      if (!res.ok) {
-        showAuthError(data.message || "OAuth callback failed");
-        return;
+      if (res.redirected || res.headers.get('content-type') === null || !res.headers.get('content-type').includes('application/json')) {
+        await checkCookieSession();
+      } else {
+        var data = await res.json();
+        if (!res.ok) {
+          showAuthError((data.error && data.error.message) || data.message || "OAuth callback failed");
+          return;
+        }
+        if (data.token) {
+          token = data.token;
+          localStorage.setItem(TOKEN_KEY, token);
+          account = data.account;
+          bootApp();
+        } else {
+          await checkCookieSession();
+        }
       }
-      token = data.token;
-      localStorage.setItem(TOKEN_KEY, token);
-      account = data.account;
-      window.history.replaceState(null, "", window.location.pathname);
-      bootApp();
     } catch (err) {
       showAuthError(err.message || "OAuth callback failed");
     }
@@ -294,11 +303,14 @@
       (conn.last_tested_at ? '<div class="detail-row"><span class="detail-label">Last tested</span><span class="detail-value">' + esc(timeAgo(conn.last_tested_at)) + '</span></div>' : '') +
       '<div class="detail-actions">' +
         '<button class="btn btn-secondary" id="detail-btn-test">Test Connection</button>' +
+        '<button class="btn btn-secondary" id="detail-btn-edit">Edit</button>' +
         (conn.last_test_result === "ok" ? '<button class="btn btn-primary" id="detail-btn-session">Start Session</button>' : '') +
       '</div>' +
       '<button class="detail-delete" id="detail-btn-delete">Delete Connection</button>';
 
     $("detail-btn-test").addEventListener("click", function () { testConnection(conn.id); });
+
+    $("detail-btn-edit").addEventListener("click", function () { showEditConnectionSheet(conn); });
 
     var sessionBtn = $("detail-btn-session");
     if (sessionBtn) {
@@ -324,6 +336,7 @@
     menu.innerHTML =
       '<button class="context-menu-item" data-action="test">Test Connection</button>' +
       (conn.last_test_result === "ok" ? '<button class="context-menu-item" data-action="session">Start Session</button>' : '') +
+      '<button class="context-menu-item" data-action="edit">Edit</button>' +
       '<button class="context-menu-item danger" data-action="delete">Delete</button>';
 
     menu.addEventListener("click", function (e) {
@@ -331,6 +344,7 @@
       closeContextMenu();
       if (action === "test") testConnection(connId);
       else if (action === "session") startSession(connId);
+      else if (action === "edit") showEditConnectionSheet(conn);
       else if (action === "delete") confirmDeleteConnection(connId, conn.label);
     });
 
@@ -507,6 +521,93 @@
       } else {
         loadConnections();
       }
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.hidden = false;
+    }
+  }
+
+  // ── Edit Connection Sheet ──────────────────────────────────────────
+  function showEditConnectionSheet(conn) {
+    closeSheet();
+    openSheet("Edit Connection");
+
+    var keypairOptions = keypairs.map(function (kp) {
+      var selected = kp.id === conn.keypair_id ? " selected" : "";
+      return '<option value="' + kp.id + '"' + selected + '>' + esc(kp.label) + ' (' + esc((kp.fingerprint || "").slice(0, 20)) + '...)</option>';
+    }).join("");
+
+    sheetContent.innerHTML =
+      '<form id="edit-connection-form">' +
+        '<div class="form-group">' +
+          '<label class="form-label">Label</label>' +
+          '<input class="form-input" id="edit-conn-label" value="' + esc(conn.label) + '" required autocomplete="off">' +
+        '</div>' +
+        '<div class="form-group">' +
+          '<label class="form-label">Host</label>' +
+          '<input class="form-input" id="edit-conn-host" value="' + esc(conn.host) + '" required autocomplete="off">' +
+        '</div>' +
+        '<div class="form-row">' +
+          '<div class="form-group">' +
+            '<label class="form-label">Username</label>' +
+            '<input class="form-input" id="edit-conn-username" value="' + esc(conn.username) + '" required autocomplete="off">' +
+          '</div>' +
+          '<div class="form-group">' +
+            '<label class="form-label">Port</label>' +
+            '<input class="form-input" id="edit-conn-port" type="number" value="' + (conn.port || 22) + '">' +
+          '</div>' +
+        '</div>' +
+        (keypairOptions
+          ? '<div class="form-group">' +
+              '<label class="form-label">SSH Key</label>' +
+              '<select class="form-select" id="edit-conn-keypair">' + keypairOptions + '</select>' +
+            '</div>'
+          : ''
+        ) +
+        '<div id="edit-conn-form-error" class="form-error" hidden></div>' +
+        '<button type="submit" class="btn btn-primary btn-block mt-16">Save Changes</button>' +
+      '</form>';
+
+    $("edit-connection-form").addEventListener("submit", function (e) {
+      e.preventDefault();
+      submitEditConnection(conn);
+    });
+  }
+
+  async function submitEditConnection(conn) {
+    var label = $("edit-conn-label").value.trim();
+    var host = $("edit-conn-host").value.trim();
+    var username = $("edit-conn-username").value.trim();
+    var port = parseInt($("edit-conn-port").value, 10) || 22;
+    var keypairSelect = $("edit-conn-keypair");
+    var keypairId = keypairSelect ? keypairSelect.value : undefined;
+    var errEl = $("edit-conn-form-error");
+
+    errEl.hidden = true;
+
+    if (!label || !host || !username) {
+      errEl.textContent = "All fields are required.";
+      errEl.hidden = false;
+      return;
+    }
+
+    var changes = {};
+    if (label !== conn.label) changes.label = label;
+    if (host !== conn.host) changes.host = host;
+    if (username !== conn.username) changes.username = username;
+    if (port !== conn.port) changes.port = port;
+    if (keypairId && keypairId !== conn.keypair_id) changes.keypair_id = keypairId;
+
+    if (Object.keys(changes).length === 0) {
+      closeSheet();
+      return;
+    }
+
+    try {
+      await api("PATCH", "/connections/" + conn.id, changes);
+      showToast("Connection updated", "success");
+      closeSheet();
+      loadConnections();
     } catch (err) {
       errEl.textContent = err.message;
       errEl.hidden = false;

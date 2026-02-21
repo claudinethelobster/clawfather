@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import * as crypto from 'crypto';
 import { execSync } from 'child_process';
-import { writeFileSync, unlinkSync, mkdirSync } from 'fs';
+import { writeFileSync, unlinkSync, mkdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { query } from '../db';
 import { deriveAccountKEK, encryptPrivateKey, computeEd25519Fingerprint } from '../crypto';
@@ -15,23 +15,20 @@ import { readBody, getClientIp } from './auth';
 const keyGenLimiter = createRateLimiter(5, 3600_000);
 
 function generateOpenSSHKeypair(label: string): { publicKeySSH: string; privateKeyPem: string } {
-  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-  const privateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' }) as string;
-
-  // Convert to OpenSSH public key format via temp file + ssh-keygen
   const tmpDir = '/tmp/clawdfather';
   try { mkdirSync(tmpDir, { recursive: true }); } catch {}
-  const tmpFile = join(tmpDir, `keygen-${crypto.randomUUID()}.pem`);
-
+  const tmpFile = join(tmpDir, `keygen-${crypto.randomUUID()}`);
   try {
-    writeFileSync(tmpFile, privateKeyPem, { mode: 0o600 });
-    const publicKeySSH = execSync(`ssh-keygen -y -f "${tmpFile}"`, {
+    execSync(`ssh-keygen -t ed25519 -N "" -f "${tmpFile}" -C "clawdfather:${label}"`, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 5000,
-    }).toString().trim() + ` clawdfather:${label}`;
+      timeout: 10000,
+    });
+    const privateKeyPem = readFileSync(tmpFile, 'utf8');
+    const publicKeySSH = readFileSync(tmpFile + '.pub', 'utf8').trim();
     return { publicKeySSH, privateKeyPem };
   } finally {
     try { unlinkSync(tmpFile); } catch {}
+    try { unlinkSync(tmpFile + '.pub'); } catch {}
   }
 }
 
