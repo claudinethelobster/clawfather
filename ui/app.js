@@ -60,9 +60,26 @@
     });
   }
 
+  // ── OS tab switching ────────────────────────────────────────────
+  function initOsTabs() {
+    document.querySelectorAll(".os-tab").forEach(function(tab) {
+      tab.addEventListener("click", function() {
+        document.querySelectorAll(".os-tab").forEach(function(t) {
+          t.classList.remove("active");
+        });
+        tab.classList.add("active");
+
+        var target = tab.getAttribute("data-tab");
+        document.getElementById("tab-unix").style.display = target === "unix" ? "flex" : "none";
+        document.getElementById("tab-windows").style.display = target === "windows" ? "flex" : "none";
+      });
+    });
+  }
+
   // ── Init ──────────────────────────────────────────────────────────
   function init() {
     initWelcomeCopyButtons();
+    initOsTabs();
 
     // Extract session from URL hash then immediately scrub it
     const hash = window.location.hash.slice(1);
