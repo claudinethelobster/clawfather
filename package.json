@@ -12,7 +12,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc --watch",
-    "test": "node --require ts-node/register --test src/routes/auth.test.ts src/routes/sessions.test.ts"
+    "test": "node --require ts-node/register --test src/routes/auth.test.ts src/routes/sessions.test.ts src/inbound.test.ts"
   },
   "dependencies": {
     "chalk": "^4.1.2",
