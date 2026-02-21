@@ -168,6 +168,30 @@ export async function handleUpdateConnection(
     }
   }
 
+  // Validate label if provided
+  if (body.label !== undefined) {
+    const l = body.label as string;
+    if (!l || l.length > 64) {
+      return apiError(res, 400, 'validation_error', 'Label must be 1-64 characters.');
+    }
+  }
+
+  // Validate host if provided
+  if (body.host !== undefined) {
+    const h = body.host as string;
+    if (!h) {
+      return apiError(res, 400, 'validation_error', 'Host cannot be empty.');
+    }
+  }
+
+  // Validate port if provided
+  if (body.port !== undefined) {
+    const p = body.port as number;
+    if (p < 1 || p > 65535) {
+      return apiError(res, 400, 'validation_error', 'Port must be between 1 and 65535.');
+    }
+  }
+
   // Validate keypair_id if provided
   if (body.keypair_id !== undefined) {
     const kpCheck = await query(

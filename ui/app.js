@@ -64,7 +64,6 @@
   const sheet = $("sheet");
   const sheetTitle = $("sheet-title");
   const sheetContent = $("sheet-content");
-
   const toastContainer = $("toast-container");
 
   // ── API Helpers ────────────────────────────────────────────────────
@@ -937,7 +936,7 @@
     ws.onclose = function (event) {
       wsAuthenticated = false;
       stopHeartbeat();
-      if (event.code === 4001) {
+      if (event.code === 4001 || event.code === 4003 || event.code === 4004) {
         addChatSystemMessage("Session has ended.");
         chatInput.disabled = true;
         btnChatSend.disabled = true;
@@ -993,7 +992,13 @@
 
       case "error":
         removeThinking();
-        addChatSystemMessage("Error: " + (msg.message || "Unknown error"));
+        if (!wsAuthenticated) {
+          addChatSystemMessage("Session has ended or is not accessible.");
+          chatInput.disabled = true;
+          btnChatSend.disabled = true;
+        } else {
+          addChatSystemMessage("Error: " + (msg.message || "Unknown error"));
+        }
         break;
 
       case "heartbeat_ack":
@@ -1173,7 +1178,10 @@
   });
 
   // ── Bottom Sheet ───────────────────────────────────────────────────
+  var sheetGeneration = 0;
+
   function openSheet(title) {
+    sheetGeneration++;
     sheetTitle.textContent = title;
     sheetContent.innerHTML = "";
     sheetBackdrop.hidden = false;
@@ -1185,9 +1193,12 @@
   }
 
   window.closeSheet = function () {
+    sheetGeneration++;
+    var gen = sheetGeneration;
     sheetBackdrop.classList.remove("visible");
     sheet.classList.remove("visible");
     setTimeout(function () {
+      if (gen !== sheetGeneration) return;
       sheetBackdrop.hidden = true;
       sheet.hidden = true;
       sheetContent.innerHTML = "";

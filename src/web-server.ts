@@ -244,6 +244,7 @@ export function startWebServer(
               );
               if (sessResult.rows.length === 0) {
                 ws.send(JSON.stringify({ type: "error", message: "Session not found or not accessible" }));
+                ws.close(4004, "Session not found");
                 return;
               }
               authenticatedSessionId = targetSessionId;
@@ -258,6 +259,7 @@ export function startWebServer(
           const session = sessionStore.get(sessionId);
           if (!session) {
             ws.send(JSON.stringify({ type: "error", message: "Session not found or expired" }));
+            ws.close(4004, "Session not found");
             return;
           }
           authenticatedSessionId = sessionId;
