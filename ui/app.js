@@ -721,6 +721,16 @@
         card.addEventListener("click", function () {
           openChat(sess);
         });
+      } else {
+        card.style.cursor = "default";
+        card.addEventListener("click", function () {
+          showToast(
+            sess.status === "error"
+              ? "Session ended due to an error. Start a new session from Connections."
+              : "Session has ended. Start a new session from Connections.",
+            "info"
+          );
+        });
       }
 
       sessionsList.appendChild(card);
@@ -798,7 +808,10 @@
       try {
         await api("DELETE", "/sessions/" + chatSessionId);
         showToast("Session ended", "success");
-        exitChat();
+        addChatSystemMessage("Session has ended.");
+        chatInput.disabled = true;
+        btnChatSend.disabled = true;
+        setTimeout(exitChat, 1500);
       } catch (err) {
         showToast(err.message, "error");
       }
