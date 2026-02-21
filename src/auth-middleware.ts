@@ -10,13 +10,20 @@ export async function authenticate(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<{ account: Account; tokenHash: string } | null> {
+  let token: string | null = null;
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (authHeader?.startsWith('Bearer ')) {
+    token = authHeader.slice(7);
+  } else {
+    const cookieHeader = req.headers.cookie ?? '';
+    const match = cookieHeader.split(';').map(s => s.trim()).find(s => s.startsWith('session_token='));
+    if (match) token = match.slice('session_token='.length);
+  }
+  if (!token) {
     apiError(res, 401, 'unauthorized', 'Missing or invalid auth token.');
     return null;
   }
 
-  const token = authHeader.slice(7);
   const tokenH = hashToken(token);
 
   const result = await query(

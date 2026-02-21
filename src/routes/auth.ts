@@ -201,11 +201,35 @@ export async function handleOAuthGitHubCallback(
     const acctRow = await query('SELECT id, display_name, email FROM accounts WHERE id = $1', [accountId]);
     const acct = acctRow.rows[0];
 
-    apiOk(res, {
-      token,
-      account: { id: acct.id, display_name: acct.display_name, email: acct.email },
-      expires_at: expiresAt.toISOString(),
-    });
+    const wantsJson =
+      (req.headers['accept'] ?? '').includes('application/json') ||
+      url.searchParams.get('mode') === 'json';
+
+    if (wantsJson) {
+      apiOk(res, {
+        token,
+        account: { id: acct.id, display_name: acct.display_name, email: acct.email },
+        expires_at: expiresAt.toISOString(),
+      });
+    } else {
+      const maxAge = Math.floor((expiresAt.getTime() - Date.now()) / 1000);
+      const isSecure =
+        req.headers['x-forwarded-proto'] === 'https' ||
+        (!config.webDomain.startsWith('localhost') && !config.webDomain.startsWith('127.'));
+      const secureFlag = isSecure ? '; Secure' : '';
+      res.setHeader(
+        'Set-Cookie',
+        `session_token=${token}; HttpOnly${secureFlag}; SameSite=Lax; Path=/; Max-Age=${maxAge}`,
+      );
+      const useHttps = !config.webDomain.startsWith('localhost') && !config.webDomain.startsWith('127.');
+      const port = config.webPort ?? 3000;
+      const baseUrl = useHttps
+        ? `https://${config.webDomain}/`
+        : `http://${config.webDomain.includes(':') ? config.webDomain : `${config.webDomain}:${port}`}/`;
+      res.setHeader('Location', baseUrl);
+      res.writeHead(302);
+      res.end();
+    }
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
