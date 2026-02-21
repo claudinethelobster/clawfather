@@ -70,7 +70,7 @@ export async function handleOAuthGitHubCallback(
 
   const stateHash = createHash('sha256').update(state).digest('hex');
   const stateResult = await query(
-    `DELETE FROM oauth_state_cache WHERE state_hash = $1 AND expires_at > NOW() RETURNING id`,
+    `DELETE FROM oauth_state_cache WHERE state_hash = $1 AND expires_at > NOW() RETURNING state_hash`,
     [stateHash],
   );
 
