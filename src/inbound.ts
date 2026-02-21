@@ -1,9 +1,21 @@
 import { getClawdfatherRuntime } from "./runtime";
 import { sendToSession } from "./web-server";
 import { sessionStore } from "./sessions";
+import { query } from "./db";
 import type { Session } from "./types";
 
 const CHANNEL_ID = "clawdfather" as const;
+const TMP_DIR = "/tmp/clawdfather";
+
+/** Sensitive patterns that must never appear in user-visible assistant output. */
+const LEAKED_META_PATTERNS: RegExp[] = [
+  /ControlPath=[^\s]+/g,
+  /ControlMaster=\w+/g,
+  /BatchMode=\w+/g,
+  /-o\s+StrictHostKeyChecking=\w+/g,
+  /UserKnownHostsFile=[^\s]+/g,
+  /SystemInstruction[:\s]/gi,
+];
 
 /**
  * Build hidden system context for the agent based on active session metadata.
@@ -36,6 +48,52 @@ export function buildSessionSystemContext(session: Session): string {
 }
 
 /**
+ * Fallback: resolve session metadata from the DB when the in-memory store
+ * has lost the entry (e.g. process restart, memory expiry race).
+ * Returns a synthetic Session with enough data to build a SystemInstruction,
+ * or undefined if the lease/connection doesn't exist in DB.
+ */
+export async function resolveSessionFromDb(sessionId: string): Promise<Session | undefined> {
+  try {
+    const result = await query(
+      `SELECT sl.id, sl.keypair_id, c.host, c.port, c.username, kp.fingerprint
+       FROM session_leases sl
+       JOIN ssh_connections c ON c.id = sl.connection_id
+       JOIN agent_keypairs kp ON kp.id = sl.keypair_id
+       WHERE sl.id = $1 AND sl.status = 'active'`,
+      [sessionId],
+    );
+    if (result.rows.length === 0) return undefined;
+
+    const r = result.rows[0];
+    return {
+      sessionId,
+      keyFingerprint: r.fingerprint ?? "unknown",
+      targetHost: r.host,
+      targetUser: r.username,
+      targetPort: r.port,
+      controlPath: `${TMP_DIR}/${sessionId}.sock`,
+      connectedAt: Date.now(),
+      lastActivity: Date.now(),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Strip leaked internal metadata / system instruction fragments from
+ * assistant output before it reaches the user.
+ */
+export function sanitizeAssistantText(text: string): string {
+  let cleaned = text;
+  for (const pat of LEAKED_META_PATTERNS) {
+    cleaned = cleaned.replace(pat, "");
+  }
+  return cleaned.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/**
  * Handle an inbound chat message from the Clawdfather web UI.
  * Routes through OpenClaw's channel system for agent processing.
  */
@@ -65,8 +123,13 @@ export async function handleClawdfatherInbound(params: {
     agentId: route.agentId,
   });
 
-  // Inject server-side system context from active session metadata
-  const session = sessionStore.get(sessionId);
+  // Inject server-side system context from active session metadata.
+  // Fall back to DB if the in-memory store has lost the entry.
+  let session = sessionStore.get(sessionId);
+  if (!session) {
+    session = await resolveSessionFromDb(sessionId) ?? undefined;
+    if (session) sessionStore.create(session);
+  }
   const systemInstruction = session ? buildSessionSystemContext(session) : undefined;
 
   const ctxPayload = {
@@ -118,8 +181,9 @@ export async function handleClawdfatherInbound(params: {
     dispatcherOptions: {
       ...prefixOptions,
       deliver: async (payload: { text?: string; mediaUrls?: string[]; mediaUrl?: string }) => {
-        const responseText = payload.text ?? "";
-        if (responseText.trim()) {
+        const rawText = payload.text ?? "";
+        const responseText = sanitizeAssistantText(rawText);
+        if (responseText) {
           sendToSession(sessionId, {
             type: "message",
             role: "assistant",
