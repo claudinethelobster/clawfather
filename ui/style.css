@@ -516,6 +516,39 @@ pre:hover .copy-btn {
   border: 1px solid var(--border);
 }
 
+/* ─── OS Tabs ─── */
+
+.os-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  width: 100%;
+  max-width: 520px;
+}
+
+.os-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 8px 14px;
+  transition: all 0.15s;
+  margin-bottom: -1px;
+}
+
+.os-tab:hover {
+  color: var(--text-secondary);
+}
+
+.os-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
 /* ─── Status: lease-ended ─── */
 
 .status-badge.lease-ended {
