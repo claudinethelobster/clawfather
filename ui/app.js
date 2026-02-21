@@ -72,7 +72,7 @@
     const headers = { "Content-Type": "application/json" };
     if (token) headers["Authorization"] = "Bearer " + token;
 
-    const opts = { method, headers };
+    const opts = { method, headers, credentials: "include" };
     if (body !== undefined) opts.body = JSON.stringify(body);
 
     const res = await fetch(API + path, opts);
@@ -1142,6 +1142,21 @@
   }
 
   // ── Init ───────────────────────────────────────────────────────────
+  async function checkCookieSession() {
+    try {
+      var res = await fetch(API + "/auth/me", { credentials: "include" });
+      if (res.ok) {
+        var data = await res.json();
+        account = data.account;
+        bootApp();
+      } else {
+        showAuthScreen();
+      }
+    } catch (err) {
+      showAuthScreen();
+    }
+  }
+
   function init() {
     var params = new URLSearchParams(window.location.search);
     var code = params.get("code");
@@ -1155,7 +1170,7 @@
     if (token) {
       bootApp();
     } else {
-      showAuthScreen();
+      checkCookieSession();
     }
   }
 
