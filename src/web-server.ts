@@ -4,6 +4,16 @@ import { join, extname } from "path";
 import { WebSocketServer, WebSocket } from "ws";
 import { sessionStore } from "./sessions";
 import type { ClawdfatherConfig } from "./types";
+import { apiError } from "./api-response";
+import { handleHealth } from "./routes/health";
+import { handleOAuthGitHubStart, handleOAuthGitHubCallback, handleDeleteSession as handleDeleteAppSession, handleGetMe } from "./routes/auth";
+import { handleListKeys, handleCreateKey, handleGetInstallCommand, handleDeleteKey } from "./routes/keys";
+import { handleListConnections, handleCreateConnection, handleUpdateConnection, handleDeleteConnection, handleTestConnection } from "./routes/connections";
+import { handleCreateSession, handleListSessions, handleGetSession, handleDeleteSession as handleDeleteSessionLease, startSessionCleanup } from "./routes/sessions";
+import { handleGetAudit } from "./routes/audit";
+import { authenticate } from "./auth-middleware";
+import { hashToken } from "./crypto";
+import { query } from "./db";
 
 const MIME: Record<string, string> = {
   ".html": "text/html",
