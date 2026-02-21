@@ -41,8 +41,8 @@ export async function handleOAuthGitHubStart(
   const stateHash = createHash('sha256').update(state).digest('hex');
 
   await query(
-    `INSERT INTO oauth_state_cache (state_hash, expires_at) VALUES ($1, NOW() + INTERVAL '10 minutes')`,
-    [stateHash],
+    `INSERT INTO oauth_state_cache (state_hash, code_verifier, expires_at) VALUES ($1, $2, NOW() + INTERVAL '10 minutes')`,
+    [stateHash, state],
   );
 
   const clientId = config.githubClientId ?? process.env.GITHUB_CLIENT_ID ?? '';
