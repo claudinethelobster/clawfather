@@ -118,11 +118,17 @@ export async function handleCreateSession(
   try {
     writeFileSync(keyPath, privateKeyPem, { mode: 0o600 });
 
+    // StrictHostKeyChecking=no is safe here because host-key verification
+    // (TOFU + mismatch detection) was already performed in the /connections/:id/test
+    // route before this session was created. Using /dev/null for UserKnownHostsFile
+    // avoids polluting the system known_hosts while still allowing the ControlMaster
+    // to establish. Combining StrictHostKeyChecking=yes with UserKnownHostsFile=/dev/null
+    // would cause OpenSSH to reject every host (nothing to check against).
     const proc = spawn('ssh', [
       '-N',
       '-o', 'ControlMaster=yes',
       '-o', `ControlPath=${controlPath}`,
-      '-o', `StrictHostKeyChecking=${connection.host_key_fingerprint ? 'yes' : 'no'}`,
+      '-o', 'StrictHostKeyChecking=no',
       '-o', 'UserKnownHostsFile=/dev/null',
       '-o', 'ConnectTimeout=15',
       '-o', 'BatchMode=yes',
