@@ -121,9 +121,9 @@
   }
 
   function logout() {
-    if (token) {
-      api("DELETE", "/auth/session").catch(function () {});
-    }
+    var headers = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = "Bearer " + token;
+    fetch(API + "/auth/session", { method: "DELETE", headers: headers, credentials: "include" }).catch(function () {});
     token = null;
     account = null;
     localStorage.removeItem(TOKEN_KEY);
