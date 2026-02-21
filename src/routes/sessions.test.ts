@@ -17,15 +17,13 @@ let mockCloseSessionClientsCalls: { sessionId: string; code: number; reason: str
 // ── Install mocks before sessions module loads ────────────────────────────
 
 const dbModule = require("../db");
-const originalQuery = dbModule.query;
-dbModule.query = async (...args: unknown[]) => {
+dbModule.query = async () => {
   const result = mockQueryResults[mockQueryCallIndex] ?? { rows: [] };
   mockQueryCallIndex++;
   return result;
 };
 
 const authMiddleware = require("../auth-middleware");
-const originalAuth = authMiddleware.authenticate;
 authMiddleware.authenticate = async (_req: unknown, res: unknown) => {
   if (!mockAuthResult) {
     const r = res as ServerResponse;
@@ -40,13 +38,11 @@ const auditModule = require("../audit");
 auditModule.auditLog = () => {};
 
 const webServerModule = require("../web-server");
-const origClose = webServerModule.closeSessionClients;
 webServerModule.closeSessionClients = (sessionId: string, code: number, reason: string) => {
   mockCloseSessionClientsCalls.push({ sessionId, code, reason });
 };
 
 const sessionsModule = require("../sessions");
-const origRemove = sessionsModule.sessionStore.remove;
 sessionsModule.sessionStore.remove = () => {};
 
 // Now import the handlers (they'll pick up the mocked modules)
