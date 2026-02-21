@@ -293,14 +293,6 @@ function testSSHConnection(
 
     const conn = new SSHClient();
 
-    conn.on('handshake', (info) => {
-      const keyData = info.hostKey;
-      if (keyData) {
-        const hash = createHash('sha256').update(keyData).digest('base64').replace(/=+$/, '');
-        hostKeyFP = `SHA256:${hash}`;
-      }
-    });
-
     conn.on('ready', () => {
       const latency = Date.now() - start;
       conn.exec('echo CLAWDFATHER_OK', (err, stream) => {
@@ -340,7 +332,11 @@ function testSSHConnection(
       username,
       privateKey: privateKeyPem,
       readyTimeout: 15_000,
-      hostVerifier: () => true,
+      hostVerifier: (key: Buffer) => {
+        const hash = createHash('sha256').update(key).digest('base64').replace(/=+$/, '');
+        hostKeyFP = `SHA256:${hash}`;
+        return true;
+      },
     });
   });
 }

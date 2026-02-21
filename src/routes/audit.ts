@@ -3,7 +3,7 @@ import { query } from '../db';
 import { apiOk } from '../api-response';
 import { authenticate } from '../auth-middleware';
 
-export async function handleGetAuditLog(
+export async function handleGetAudit(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
