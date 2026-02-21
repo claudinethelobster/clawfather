@@ -7,7 +7,7 @@ import { handleApiRequest } from "./api-router";
 import { hashToken } from "./crypto";
 import { query } from "./db";
 import { apiError } from "./api-response";
-import { startSessionCleanup } from "./session-cleanup";
+import { startSessionCleanup } from "./routes/sessions";
 import type { ClawdfatherConfig } from "./types";
 
 const MIME: Record<string, string> = {
