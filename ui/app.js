@@ -266,7 +266,7 @@
       card.innerHTML =
         '<div class="card-header">' +
           '<span class="card-label">' + esc(conn.label) + '</span>' +
-          '<button class="card-menu" onclick="event.stopPropagation(); showConnectionMenu(\'' + conn.id + '\', this)">⋮</button>' +
+          '<button class="card-menu" aria-label="More options" onclick="event.stopPropagation(); showConnectionMenu(\'' + conn.id + '\', this)">⋮</button>' +
         '</div>' +
         '<div class="card-host">' + esc(conn.username + "@" + conn.host + ":" + conn.port) + '</div>' +
         '<div class="card-footer">' +

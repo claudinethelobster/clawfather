@@ -2,8 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#0d0d0d">
   <title>Clawdfather</title>
@@ -62,7 +63,7 @@
             <button class="btn btn-primary" onclick="showAddConnectionSheet()">Add your first server</button>
           </div>
           <div id="connections-list" class="card-list" hidden></div>
-          <button id="fab-add-connection" class="fab" onclick="showAddConnectionSheet()" hidden>
+          <button id="fab-add-connection" class="fab" onclick="showAddConnectionSheet()" hidden aria-label="Add connection">
             <span>+</span>
           </button>
         </div>
@@ -123,7 +124,7 @@
         <!-- ═══ CHAT VIEW ═══ -->
         <div id="view-chat" class="view view-chat" hidden>
           <div class="chat-header">
-            <button id="btn-chat-back" class="btn-icon" onclick="exitChat()">
+            <button id="btn-chat-back" class="btn-icon" onclick="exitChat()" aria-label="Go back">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
             </button>
             <div class="chat-header-info">
@@ -167,7 +168,7 @@
     <div id="sheet" class="sheet" hidden>
       <div class="sheet-header">
         <h2 id="sheet-title" class="sheet-title"></h2>
-        <button class="btn-icon sheet-close" onclick="closeSheet()">
+        <button class="btn-icon sheet-close" onclick="closeSheet()" aria-label="Close">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
