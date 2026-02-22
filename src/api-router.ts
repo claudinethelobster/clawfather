@@ -26,6 +26,10 @@ import {
   handleGetSession,
   handleDeleteSession,
 } from './routes/sessions';
+import {
+  handleBootstrapSession,
+  handleConfirmAndStartSession,
+} from './routes/onboarding';
 import { handleGetAudit } from './routes/audit';
 import type { ClawdfatherConfig } from './types';
 
@@ -122,6 +126,12 @@ export async function handleApiRequest(
         if (method === 'GET') return await handleListSessions(req, res);
         if (method === 'POST') return await handleCreateSession(req, res, config);
         return apiError(res, 405, 'method_not_allowed', 'Method not allowed.');
+      }
+      if (segments.length === 4 && segments[3] === 'bootstrap' && method === 'POST') {
+        return await handleBootstrapSession(req, res, config);
+      }
+      if (segments.length === 6 && segments[3] === 'bootstrap' && segments[5] === 'confirm' && method === 'POST') {
+        return await handleConfirmAndStartSession(req, res, segments[4], config);
       }
       const sessionId = segments[3];
       if (segments.length === 4) {
