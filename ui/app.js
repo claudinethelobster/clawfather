@@ -11,8 +11,13 @@
   let account = null;
   let connections = [];
   let keypairs = [];
+
+  function closeContextMenu() {
+    var menu = document.querySelector(".context-menu");
+    if (menu) menu.remove();
+  }
   let sessions = [];
-  let currentView = "connections";
+  let currentView = "sessions";
   let ws = null;
   let wsAuthenticated = false;
   let heartbeatTimer = null;
@@ -20,6 +25,7 @@
   let chatSessionId = null;
   let chatStartedAt = null;
   let isThinking = false;
+  let onboardingState = null;
 
   // ── DOM References ─────────────────────────────────────────────────
   const $ = (id) => document.getElementById(id);
@@ -32,24 +38,17 @@
   const headerAvatar = $("header-avatar");
   const bottomNav = $("bottom-nav");
 
-  const viewConnections = $("view-connections");
-  const connectionsLoading = $("connections-loading");
-  const connectionsEmpty = $("connections-empty");
-  const connectionsList = $("connections-list");
-  const fabAddConnection = $("fab-add-connection");
-
   const viewSessions = $("view-sessions");
   const sessionsLoading = $("sessions-loading");
   const sessionsEmpty = $("sessions-empty");
   const sessionsList = $("sessions-list");
+  const fabNewSession = $("fab-new-session");
 
   const viewSettings = $("view-settings");
   const settingsAvatar = $("settings-avatar");
   const settingsDisplayName = $("settings-display-name");
   const settingsEmail = $("settings-email");
   const settingsVersion = $("settings-version");
-  const keysList = $("keys-list");
-  const btnGenerateKey = $("btn-generate-key");
   const btnSignOut = $("btn-sign-out");
 
   const viewChat = $("view-chat");
@@ -59,6 +58,7 @@
   const chatInput = $("chat-input");
   const btnChatSend = $("btn-chat-send");
   const btnEndSession = $("btn-end-session");
+  const btnCancelOnboarding = $("btn-cancel-onboarding");
 
   const sheetBackdrop = $("sheet-backdrop");
   const sheet = $("sheet");
@@ -198,485 +198,31 @@
 
   // ── Navigation ─────────────────────────────────────────────────────
   window.navigate = function (view) {
+    if (view === "connections") view = "sessions";
     currentView = view;
 
-    viewConnections.hidden = view !== "connections";
     viewSessions.hidden = view !== "sessions";
     viewSettings.hidden = view !== "settings";
     viewChat.hidden = true;
     viewChat.classList.remove("active-chat");
 
     bottomNav.hidden = false;
+    onboardingState = null;
 
     document.querySelectorAll(".nav-tab").forEach(function (tab) {
       tab.classList.toggle("active", tab.getAttribute("data-view") === view);
     });
 
-    if (view === "connections") loadConnections();
-    else if (view === "sessions") loadSessions();
+    if (view === "sessions") loadSessions();
     else if (view === "settings") loadSettings();
   };
-
-  // ── Connections ────────────────────────────────────────────────────
-  async function loadConnections() {
-    connectionsLoading.hidden = false;
-    connectionsEmpty.hidden = true;
-    connectionsList.hidden = true;
-    fabAddConnection.hidden = true;
-
-    try {
-      var data = await api("GET", "/connections");
-      connections = data.connections || [];
-
-      var kData = await api("GET", "/keys");
-      keypairs = (kData.keypairs || []).filter(function (k) { return k.is_active; });
-    } catch (err) {
-      connectionsLoading.hidden = true;
-      showToast("Failed to load connections: " + err.message, "error");
-      return;
-    }
-
-    connectionsLoading.hidden = true;
-    if (connections.length === 0) {
-      connectionsEmpty.hidden = false;
-    } else {
-      connectionsList.hidden = false;
-      fabAddConnection.hidden = false;
-      renderConnections();
-    }
-  }
-
-  function renderConnections() {
-    connectionsList.innerHTML = "";
-    connections.forEach(function (conn) {
-      var statusClass = "pill-gray";
-      var statusLabel = "Untested";
-      if (conn.last_test_result === "ok") {
-        statusClass = "pill-success";
-        statusLabel = "Tested";
-      } else if (conn.last_test_result === "failed" || conn.last_test_result === "timeout") {
-        statusClass = "pill-danger";
-        statusLabel = conn.last_test_result === "timeout" ? "Timeout" : "Failed";
-      }
-
-      var timeStr = conn.last_tested_at ? timeAgo(conn.last_tested_at) : "";
-
-      var card = document.createElement("div");
-      card.className = "card";
-      card.innerHTML =
-        '<div class="card-header">' +
-          '<span class="card-label">' + esc(conn.label) + '</span>' +
-          '<button class="card-menu" aria-label="More options" onclick="event.stopPropagation(); showConnectionMenu(\'' + conn.id + '\', this)">⋮</button>' +
-        '</div>' +
-        '<div class="card-host">' + esc(conn.username + "@" + conn.host + ":" + conn.port) + '</div>' +
-        '<div class="card-footer">' +
-          '<span class="pill ' + statusClass + '">' + statusLabel + '</span>' +
-          (timeStr ? '<span class="card-time">' + esc(timeStr) + '</span>' : '') +
-        '</div>';
-      card.addEventListener("click", function () {
-        showConnectionDetail(conn);
-      });
-      connectionsList.appendChild(card);
-    });
-  }
-
-  // ── Connection Detail Sheet ────────────────────────────────────────
-  function showConnectionDetail(conn) {
-    openSheet(esc(conn.label));
-
-    var statusPill = "pill-gray";
-    var statusLabel = "Untested";
-    if (conn.last_test_result === "ok") {
-      statusPill = "pill-success";
-      statusLabel = "Tested OK";
-    } else if (conn.last_test_result === "failed" || conn.last_test_result === "timeout") {
-      statusPill = "pill-danger";
-      statusLabel = conn.last_test_result === "timeout" ? "Timed out" : "Failed";
-    }
-
-    sheetContent.innerHTML =
-      '<div class="detail-row"><span class="detail-label">Host</span><span class="detail-value">' + esc(conn.host) + '</span></div>' +
-      '<div class="detail-row"><span class="detail-label">Port</span><span class="detail-value">' + conn.port + '</span></div>' +
-      '<div class="detail-row"><span class="detail-label">Username</span><span class="detail-value">' + esc(conn.username) + '</span></div>' +
-      '<div class="detail-row"><span class="detail-label">Status</span><span class="pill ' + statusPill + '">' + statusLabel + '</span></div>' +
-      (conn.last_tested_at ? '<div class="detail-row"><span class="detail-label">Last tested</span><span class="detail-value">' + esc(timeAgo(conn.last_tested_at)) + '</span></div>' : '') +
-      '<div class="detail-actions">' +
-        '<button class="btn btn-secondary" id="detail-btn-test">Test Connection</button>' +
-        '<button class="btn btn-secondary" id="detail-btn-edit">Edit</button>' +
-        (conn.last_test_result === "ok" ? '<button class="btn btn-primary" id="detail-btn-session">Start Session</button>' : '') +
-      '</div>' +
-      '<button class="detail-delete" id="detail-btn-delete">Delete Connection</button>';
-
-    $("detail-btn-test").addEventListener("click", function () { testConnection(conn.id); });
-
-    $("detail-btn-edit").addEventListener("click", function () { showEditConnectionSheet(conn); });
-
-    var sessionBtn = $("detail-btn-session");
-    if (sessionBtn) {
-      sessionBtn.addEventListener("click", function () { startSession(conn.id); });
-    }
-
-    $("detail-btn-delete").addEventListener("click", function () { confirmDeleteConnection(conn.id, conn.label); });
-  }
-
-  // ── Connection Context Menu ────────────────────────────────────────
-  window.showConnectionMenu = function (connId, btn) {
-    closeContextMenu();
-    var conn = connections.find(function (c) { return c.id === connId; });
-    if (!conn) return;
-
-    var rect = btn.getBoundingClientRect();
-    var menu = document.createElement("div");
-    menu.className = "context-menu";
-    menu.id = "context-menu";
-    menu.style.top = rect.bottom + 4 + "px";
-    menu.style.right = (window.innerWidth - rect.right) + "px";
-
-    menu.innerHTML =
-      '<button class="context-menu-item" data-action="test">Test Connection</button>' +
-      (conn.last_test_result === "ok" ? '<button class="context-menu-item" data-action="session">Start Session</button>' : '') +
-      '<button class="context-menu-item" data-action="edit">Edit</button>' +
-      '<button class="context-menu-item danger" data-action="delete">Delete</button>';
-
-    menu.addEventListener("click", function (e) {
-      var action = e.target.getAttribute("data-action");
-      closeContextMenu();
-      if (action === "test") testConnection(connId);
-      else if (action === "session") startSession(connId);
-      else if (action === "edit") showEditConnectionSheet(conn);
-      else if (action === "delete") confirmDeleteConnection(connId, conn.label);
-    });
-
-    document.body.appendChild(menu);
-
-    setTimeout(function () {
-      document.addEventListener("click", closeContextMenu, { once: true });
-    }, 0);
-  };
-
-  function closeContextMenu() {
-    var m = $("context-menu");
-    if (m) m.remove();
-  }
-
-  // ── Test Connection ────────────────────────────────────────────────
-  async function testConnection(connId) {
-    closeSheet();
-    closeContextMenu();
-
-    openSheet("Testing Connection");
-    sheetContent.innerHTML =
-      '<div class="test-result"><div class="spinner"></div><p>Connecting via SSH...</p></div>';
-
-    try {
-      var result = await api("POST", "/connections/" + connId + "/test");
-      if (result.result === "ok") {
-        sheetContent.innerHTML =
-          '<div class="test-result">' +
-            '<div class="test-result-icon">✅</div>' +
-            '<div class="test-result-title">Connection Successful</div>' +
-            '<div class="test-result-detail">' + (result.latency_ms ? result.latency_ms + "ms latency" : "") + '</div>' +
-          '</div>' +
-          '<button class="btn btn-primary btn-block" id="test-done-btn">Done</button>';
-        $("test-done-btn").addEventListener("click", function () {
-          closeSheet();
-          loadConnections();
-        });
-      } else {
-        sheetContent.innerHTML =
-          '<div class="test-result">' +
-            '<div class="test-result-icon">❌</div>' +
-            '<div class="test-result-title">' + esc(result.result === "timeout" ? "Timed Out" : "Connection Failed") + '</div>' +
-            '<div class="test-result-detail">' + esc(result.message || "") + '</div>' +
-          '</div>' +
-          '<button class="btn btn-secondary btn-block" id="test-done-btn">Close</button>';
-        $("test-done-btn").addEventListener("click", function () {
-          closeSheet();
-          loadConnections();
-        });
-      }
-    } catch (err) {
-      if (err.code === "host_key_changed" && err.data) {
-        renderHostKeyWarning(connId, err.data);
-      } else {
-        sheetContent.innerHTML =
-          '<div class="test-result">' +
-            '<div class="test-result-icon">❌</div>' +
-            '<div class="test-result-title">Error</div>' +
-            '<div class="test-result-detail">' + esc(err.message) + '</div>' +
-          '</div>' +
-          '<button class="btn btn-secondary btn-block" id="test-done-btn">Close</button>';
-        $("test-done-btn").addEventListener("click", closeSheet);
-      }
-    }
-  }
-
-  function renderHostKeyWarning(connId, data) {
-    sheetContent.innerHTML =
-      '<div class="host-key-warning">' +
-        '<div class="host-key-warning-title">⚠️ Host Key Changed</div>' +
-        '<div class="host-key-warning-text">The server\'s SSH host key has changed since the last test. This could indicate a server reinstall or a man-in-the-middle attack.</div>' +
-        '<div class="host-key-fingerprints">' +
-          '<div class="host-key-fp-row"><span class="host-key-fp-label">Old:</span><span class="host-key-fp-value">' + esc(data.old_fingerprint || "") + '</span></div>' +
-          '<div class="host-key-fp-row"><span class="host-key-fp-label">New:</span><span class="host-key-fp-value">' + esc(data.new_fingerprint || "") + '</span></div>' +
-        '</div>' +
-        '<div class="host-key-actions">' +
-          '<button class="btn btn-secondary" id="hk-cancel">Cancel</button>' +
-          '<button class="btn btn-primary" id="hk-accept">Accept New Key</button>' +
-        '</div>' +
-      '</div>';
-
-    $("hk-cancel").addEventListener("click", function () {
-      closeSheet();
-      loadConnections();
-    });
-    $("hk-accept").addEventListener("click", async function () {
-      try {
-        await api("POST", "/connections/" + connId + "/test", { accept_host_key: true });
-        showToast("Host key updated", "success");
-        closeSheet();
-        loadConnections();
-      } catch (err) {
-        showToast(err.message, "error");
-      }
-    });
-  }
-
-  // ── Add Connection Sheet ───────────────────────────────────────────
-  window.showAddConnectionSheet = function () {
-    openSheet("Add Connection");
-
-    var keypairOptions = keypairs.map(function (kp) {
-      return '<option value="' + kp.id + '">' + esc(kp.label) + ' (' + esc((kp.fingerprint || "").slice(0, 20)) + '...)</option>';
-    }).join("");
-
-    sheetContent.innerHTML =
-      '<form id="add-connection-form">' +
-        '<div class="form-group">' +
-          '<label class="form-label">Label</label>' +
-          '<input class="form-input" id="conn-label" placeholder="My Server" required autocomplete="off">' +
-        '</div>' +
-        '<div class="form-group">' +
-          '<label class="form-label">Host</label>' +
-          '<input class="form-input" id="conn-host" placeholder="192.168.1.100 or server.example.com" required autocomplete="off">' +
-        '</div>' +
-        '<div class="form-row">' +
-          '<div class="form-group">' +
-            '<label class="form-label">Username</label>' +
-            '<input class="form-input" id="conn-username" placeholder="root" required autocomplete="off">' +
-          '</div>' +
-          '<div class="form-group">' +
-            '<label class="form-label">Port</label>' +
-            '<input class="form-input" id="conn-port" type="number" placeholder="22" value="22">' +
-          '</div>' +
-        '</div>' +
-        (keypairOptions
-          ? '<div class="form-group">' +
-              '<label class="form-label">SSH Key</label>' +
-              '<select class="form-select" id="conn-keypair">' + keypairOptions + '</select>' +
-            '</div>'
-          : '<div class="form-group"><p class="form-error">No SSH keys found. Generate one in Settings first.</p></div>'
-        ) +
-        '<div id="conn-form-error" class="form-error" hidden></div>' +
-        '<button type="submit" class="btn btn-primary btn-block mt-16"' + (keypairOptions ? '' : ' disabled') + '>Add Connection</button>' +
-      '</form>';
-
-    $("add-connection-form").addEventListener("submit", function (e) {
-      e.preventDefault();
-      submitAddConnection();
-    });
-  };
-
-  async function submitAddConnection() {
-    var label = $("conn-label").value.trim();
-    var host = $("conn-host").value.trim();
-    var username = $("conn-username").value.trim();
-    var port = parseInt($("conn-port").value, 10) || 22;
-    var keypairSelect = $("conn-keypair");
-    var keypairId = keypairSelect ? keypairSelect.value : undefined;
-    var errEl = $("conn-form-error");
-
-    errEl.hidden = true;
-
-    if (!label || !host || !username) {
-      errEl.textContent = "All fields are required.";
-      errEl.hidden = false;
-      return;
-    }
-
-    try {
-      var data = await api("POST", "/connections", {
-        label: label,
-        host: host,
-        port: port,
-        username: username,
-        keypair_id: keypairId,
-      });
-      showToast("Connection added", "success");
-      closeSheet();
-
-      if (data.connection && data.connection.keypair_id) {
-        showInstallKeySheet(data.connection);
-      } else {
-        loadConnections();
-      }
-    } catch (err) {
-      errEl.textContent = err.message;
-      errEl.hidden = false;
-    }
-  }
-
-  // ── Edit Connection Sheet ──────────────────────────────────────────
-  function showEditConnectionSheet(conn) {
-    closeSheet();
-    openSheet("Edit Connection");
-
-    var keypairOptions = keypairs.map(function (kp) {
-      var selected = kp.id === conn.keypair_id ? " selected" : "";
-      return '<option value="' + kp.id + '"' + selected + '>' + esc(kp.label) + ' (' + esc((kp.fingerprint || "").slice(0, 20)) + '...)</option>';
-    }).join("");
-
-    sheetContent.innerHTML =
-      '<form id="edit-connection-form">' +
-        '<div class="form-group">' +
-          '<label class="form-label">Label</label>' +
-          '<input class="form-input" id="edit-conn-label" value="' + esc(conn.label) + '" required autocomplete="off">' +
-        '</div>' +
-        '<div class="form-group">' +
-          '<label class="form-label">Host</label>' +
-          '<input class="form-input" id="edit-conn-host" value="' + esc(conn.host) + '" required autocomplete="off">' +
-        '</div>' +
-        '<div class="form-row">' +
-          '<div class="form-group">' +
-            '<label class="form-label">Username</label>' +
-            '<input class="form-input" id="edit-conn-username" value="' + esc(conn.username) + '" required autocomplete="off">' +
-          '</div>' +
-          '<div class="form-group">' +
-            '<label class="form-label">Port</label>' +
-            '<input class="form-input" id="edit-conn-port" type="number" value="' + (conn.port || 22) + '">' +
-          '</div>' +
-        '</div>' +
-        (keypairOptions
-          ? '<div class="form-group">' +
-              '<label class="form-label">SSH Key</label>' +
-              '<select class="form-select" id="edit-conn-keypair">' + keypairOptions + '</select>' +
-            '</div>'
-          : ''
-        ) +
-        '<div id="edit-conn-form-error" class="form-error" hidden></div>' +
-        '<button type="submit" class="btn btn-primary btn-block mt-16">Save Changes</button>' +
-      '</form>';
-
-    $("edit-connection-form").addEventListener("submit", function (e) {
-      e.preventDefault();
-      submitEditConnection(conn);
-    });
-  }
-
-  async function submitEditConnection(conn) {
-    var label = $("edit-conn-label").value.trim();
-    var host = $("edit-conn-host").value.trim();
-    var username = $("edit-conn-username").value.trim();
-    var port = parseInt($("edit-conn-port").value, 10) || 22;
-    var keypairSelect = $("edit-conn-keypair");
-    var keypairId = keypairSelect ? keypairSelect.value : undefined;
-    var errEl = $("edit-conn-form-error");
-
-    errEl.hidden = true;
-
-    if (!label || !host || !username) {
-      errEl.textContent = "All fields are required.";
-      errEl.hidden = false;
-      return;
-    }
-
-    var changes = {};
-    if (label !== conn.label) changes.label = label;
-    if (host !== conn.host) changes.host = host;
-    if (username !== conn.username) changes.username = username;
-    if (port !== conn.port) changes.port = port;
-    if (keypairId && keypairId !== conn.keypair_id) changes.keypair_id = keypairId;
-
-    if (Object.keys(changes).length === 0) {
-      closeSheet();
-      return;
-    }
-
-    try {
-      await api("PATCH", "/connections/" + conn.id, changes);
-      showToast("Connection updated", "success");
-      closeSheet();
-      loadConnections();
-    } catch (err) {
-      errEl.textContent = err.message;
-      errEl.hidden = false;
-    }
-  }
-
-  // ── Install Key Sheet ──────────────────────────────────────────────
-  async function showInstallKeySheet(conn) {
-    openSheet("Install SSH Key");
-
-    sheetContent.innerHTML =
-      '<p style="color: var(--text-secondary); margin-bottom: 16px; font-size: 14px; line-height: 1.6;">' +
-        'Run this command on <strong>' + esc(conn.username + "@" + conn.host) + '</strong> to authorize Clawdfather\'s SSH key:' +
-      '</p>' +
-      '<div class="command-box" id="install-command-text">Loading...</div>' +
-      '<button class="btn btn-secondary btn-block mb-16" id="copy-install-cmd">Copy Command</button>' +
-      '<button class="btn btn-primary btn-block" id="install-done-btn">Done, Test Connection</button>';
-
-    try {
-      var kpId = conn.keypair_id;
-      var data = await api("GET", "/keys/" + kpId + "/install-command");
-      $("install-command-text").textContent = data.command;
-
-      $("copy-install-cmd").addEventListener("click", function () {
-        navigator.clipboard.writeText(data.command).then(function () {
-          showToast("Command copied!", "success");
-        }).catch(function () {
-          showToast("Copy failed — select manually", "warning");
-        });
-      });
-    } catch (err) {
-      $("install-command-text").textContent = "Failed to load install command: " + err.message;
-    }
-
-    $("install-done-btn").addEventListener("click", function () {
-      closeSheet();
-      testConnection(conn.id);
-    });
-  }
-
-  // ── Delete Connection ──────────────────────────────────────────────
-  function confirmDeleteConnection(connId, label) {
-    closeSheet();
-    openSheet("Delete Connection");
-
-    sheetContent.innerHTML =
-      '<p class="confirm-text">Are you sure you want to delete <strong>' + esc(label) + '</strong>? This cannot be undone.</p>' +
-      '<div class="confirm-actions">' +
-        '<button class="btn btn-secondary" id="delete-cancel">Cancel</button>' +
-        '<button class="btn btn-danger-text" id="delete-confirm">Delete</button>' +
-      '</div>';
-
-    $("delete-cancel").addEventListener("click", closeSheet);
-    $("delete-confirm").addEventListener("click", async function () {
-      try {
-        await api("DELETE", "/connections/" + connId);
-        showToast("Connection deleted", "success");
-        closeSheet();
-        loadConnections();
-      } catch (err) {
-        showToast(err.message, "error");
-      }
-    });
-  }
 
   // ── Sessions ───────────────────────────────────────────────────────
   async function loadSessions() {
     sessionsLoading.hidden = false;
     sessionsEmpty.hidden = true;
     sessionsList.hidden = true;
+    fabNewSession.hidden = true;
 
     try {
       var data = await api("GET", "/sessions");
@@ -692,6 +238,7 @@
       sessionsEmpty.hidden = false;
     } else {
       sessionsList.hidden = false;
+      fabNewSession.hidden = false;
       renderSessions();
     }
   }
@@ -726,8 +273,8 @@
         card.addEventListener("click", function () {
           showToast(
             sess.status === "error"
-              ? "Session ended due to an error. Start a new session from Connections."
-              : "Session has ended. Start a new session from Connections.",
+              ? "Session ended due to an error. Start a new session."
+              : "Session has ended. Start a new session.",
             "info"
           );
         });
@@ -740,7 +287,6 @@
   // ── Start Session ──────────────────────────────────────────────────
   async function startSession(connectionId) {
     closeSheet();
-    closeContextMenu();
     showToast("Starting session...", "info");
 
     try {
@@ -754,6 +300,7 @@
 
   // ── Chat View ──────────────────────────────────────────────────────
   function openChat(session) {
+    onboardingState = null;
     chatSessionId = session.id;
     chatStartedAt = session.started_at ? new Date(session.started_at) : new Date();
 
@@ -763,8 +310,10 @@
     chatInput.value = "";
     chatInput.disabled = false;
     btnChatSend.disabled = false;
+    btnEndSession.hidden = false;
+    btnCancelOnboarding.hidden = true;
+    chatTimer.textContent = "";
 
-    viewConnections.hidden = true;
     viewSessions.hidden = true;
     viewSettings.hidden = true;
     viewChat.hidden = false;
@@ -781,9 +330,11 @@
 
   window.exitChat = function () {
     disconnectWs();
+    onboardingState = null;
     viewChat.hidden = true;
     viewChat.style.display = "";
     viewChat.classList.remove("active-chat");
+    chatInput.placeholder = "Ask me to manage your server...";
     if (chatTimerInterval) {
       clearInterval(chatTimerInterval);
       chatTimerInterval = null;
@@ -902,8 +453,17 @@
   // ── Chat Input ─────────────────────────────────────────────────────
   window.sendChatMessage = function () {
     var text = chatInput.value.trim();
-    if (!text || !wsAuthenticated) return;
+    if (!text) return;
 
+    if (onboardingState) {
+      addChatMessage("user", text);
+      chatInput.value = "";
+      chatInput.style.height = "auto";
+      handleOnboardingMessage(text);
+      return;
+    }
+
+    if (!wsAuthenticated) return;
     addChatMessage("user", text);
     ws.send(JSON.stringify({ type: "message", text: text }));
     chatInput.value = "";
@@ -1039,9 +599,8 @@
   }
 
   // ── Settings ───────────────────────────────────────────────────────
-  async function loadSettings() {
+  function loadSettings() {
     renderSettings();
-    await loadKeys();
   }
 
   function renderSettings() {
@@ -1054,124 +613,176 @@
     settingsAvatar.textContent = initial;
   }
 
-  async function loadKeys() {
-    keysList.innerHTML = '<div class="loading-state" style="padding: 24px 0;"><div class="spinner"></div></div>';
-    try {
-      var data = await api("GET", "/keys");
-      keypairs = data.keypairs || [];
-      renderKeys();
-    } catch (err) {
-      keysList.innerHTML = '<p style="padding: 16px; color: var(--text-secondary);">Failed to load keys</p>';
+  // ── SSH Target Parser ──────────────────────────────────────────────
+  function parseSSHTarget(text) {
+    if (!text || typeof text !== "string") return null;
+    text = text.trim();
+    var atIdx = text.indexOf("@");
+    if (atIdx < 1) return null;
+
+    var username = text.substring(0, atIdx);
+    var rest = text.substring(atIdx + 1);
+    if (!rest) return null;
+
+    var port = 22;
+    var host = rest;
+    var colonIdx = rest.lastIndexOf(":");
+    if (colonIdx > 0) {
+      var portStr = rest.substring(colonIdx + 1);
+      var parsedPort = parseInt(portStr, 10);
+      if (!isNaN(parsedPort) && String(parsedPort) === portStr) {
+        port = parsedPort;
+        host = rest.substring(0, colonIdx);
+      }
     }
+
+    if (!/^[a-z_][a-z0-9_-]{0,63}$/.test(username)) return null;
+    if (!host) return null;
+    if (port < 1 || port > 65535) return null;
+
+    return { username: username, host: host, port: port };
   }
 
-  function renderKeys() {
-    if (keypairs.length === 0) {
-      keysList.innerHTML = '<p style="padding: 16px; color: var(--text-secondary);">No SSH keys yet.</p>';
-      return;
-    }
+  // ── Onboarding Chat Flow ──────────────────────────────────────────
+  window.startOnboardingChat = function () {
+    onboardingState = { step: "awaiting_target" };
+    chatSessionId = null;
+    chatStartedAt = null;
 
-    keysList.innerHTML = "";
-    keypairs.forEach(function (kp) {
-      var item = document.createElement("div");
-      item.className = "key-item";
-      item.innerHTML =
-        '<div class="key-item-header">' +
-          '<span class="key-item-label">' + esc(kp.label) + '</span>' +
-          '<span class="pill ' + (kp.is_active ? "pill-success" : "pill-gray") + '">' + (kp.is_active ? "Active" : "Revoked") + '</span>' +
-        '</div>' +
-        '<div class="key-item-fingerprint">' + esc(kp.fingerprint || "") + '</div>';
+    chatConnectionLabel.textContent = "New Session";
+    chatMessages.innerHTML = "";
+    chatInput.value = "";
+    chatInput.disabled = false;
+    chatInput.placeholder = "user@host or user@host:port";
+    btnChatSend.disabled = false;
+    btnEndSession.hidden = true;
+    btnCancelOnboarding.hidden = false;
+    chatTimer.textContent = "";
 
-      item.addEventListener("click", function () {
-        showKeyDetail(kp);
-      });
+    viewSessions.hidden = true;
+    viewSettings.hidden = true;
+    viewChat.hidden = false;
+    viewChat.style.display = "flex";
+    viewChat.classList.add("active-chat");
+    bottomNav.hidden = true;
 
-      keysList.appendChild(item);
-    });
-  }
+    addChatMessage("assistant",
+      "\uD83D\uDC4B Let's get you connected!\n\n" +
+      "Enter your SSH target in this format:\n" +
+      "  `user@host` or `user@host:port`\n\n" +
+      "Examples:\n" +
+      "  `root@192.168.1.100`\n" +
+      "  `deploy@myserver.com:2222`"
+    );
+  };
 
-  function showKeyDetail(kp) {
-    openSheet(esc(kp.label));
-    sheetContent.innerHTML =
-      '<div class="detail-row"><span class="detail-label">Algorithm</span><span class="detail-value">' + esc(kp.algorithm || "ed25519") + '</span></div>' +
-      '<div class="detail-row"><span class="detail-label">Fingerprint</span><span class="detail-value">' + esc(kp.fingerprint || "") + '</span></div>' +
-      '<div class="detail-row"><span class="detail-label">Status</span><span class="pill ' + (kp.is_active ? "pill-success" : "pill-gray") + '">' + (kp.is_active ? "Active" : "Revoked") + '</span></div>' +
-      '<div class="detail-row"><span class="detail-label">Created</span><span class="detail-value">' + esc(timeAgo(kp.created_at)) + '</span></div>' +
-      '<div class="detail-actions">' +
-        '<button class="btn btn-secondary" id="key-install-btn">Install Command</button>' +
-        (kp.is_active ? '<button class="btn btn-danger-text" id="key-revoke-btn">Revoke Key</button>' : '') +
-      '</div>';
+  async function handleOnboardingMessage(text) {
+    if (!onboardingState) return;
 
-    $("key-install-btn").addEventListener("click", async function () {
+    if (onboardingState.step === "awaiting_target") {
+      var parsed = parseSSHTarget(text);
+      if (!parsed) {
+        addChatMessage("assistant", "That doesn't look right. Please enter as `user@host` or `user@host:port`.");
+        return;
+      }
+
+      onboardingState.target = parsed;
+      chatInput.disabled = true;
+      btnChatSend.disabled = true;
+      showThinking();
+
       try {
-        var data = await api("GET", "/keys/" + kp.id + "/install-command");
-        closeSheet();
-        openSheet("Install Command");
-        sheetContent.innerHTML =
-          '<div class="command-box">' + esc(data.command) + '</div>' +
-          '<button class="btn btn-secondary btn-block" id="copy-key-cmd">Copy Command</button>' +
-          '<button class="btn btn-primary btn-block mt-12" id="key-cmd-done">Done</button>';
+        var keyData = await api("POST", "/keys", { label: "default" });
+        var keypairId = keyData.keypair.id;
+        onboardingState.keypairId = keypairId;
 
-        $("copy-key-cmd").addEventListener("click", function () {
-          navigator.clipboard.writeText(data.command).then(function () {
-            showToast("Copied!", "success");
-          }).catch(function () {
-            showToast("Copy failed", "warning");
-          });
+        var connData = await api("POST", "/connections", {
+          label: parsed.host,
+          host: parsed.host,
+          port: parsed.port,
+          username: parsed.username,
+          keypair_id: keypairId,
         });
-        $("key-cmd-done").addEventListener("click", closeSheet);
-      } catch (err) {
-        showToast(err.message, "error");
-      }
-    });
+        var connId = connData.connection.id;
+        onboardingState.connId = connId;
 
-    var revokeBtn = $("key-revoke-btn");
-    if (revokeBtn) {
-      revokeBtn.addEventListener("click", async function () {
+        var installData = await api("GET", "/keys/" + keypairId + "/install-command");
+        var command = installData.command;
+
+        removeThinking();
+
+        var target = parsed.username + "@" + parsed.host + (parsed.port !== 22 ? ":" + parsed.port : "");
+        var msgHtml = "Got it! To authorize Clawdfather's SSH key on **" + target + "**, run this command on your server:\n\n" +
+          "```\n" + command + "\n```\n\n" +
+          "Once you've run it, say **done** and I'll test the connection.";
+
+        addChatMessage("assistant", msgHtml);
+
+        onboardingState.step = "awaiting_done";
+        onboardingState.installCommand = command;
+        chatInput.disabled = false;
+        btnChatSend.disabled = false;
+        chatInput.placeholder = 'Type "done" when ready...';
+      } catch (err) {
+        removeThinking();
+        addChatMessage("assistant", "Something went wrong: " + esc(err.message) + "\n\nPlease try entering your SSH target again.");
+        onboardingState.step = "awaiting_target";
+        chatInput.disabled = false;
+        btnChatSend.disabled = false;
+      }
+
+    } else if (onboardingState.step === "awaiting_done") {
+      if (/^done$/i.test(text.trim())) {
+        chatInput.disabled = true;
+        btnChatSend.disabled = true;
+        showThinking();
+
         try {
-          await api("DELETE", "/keys/" + kp.id);
-          showToast("Key revoked", "success");
-          closeSheet();
-          loadKeys();
+          var testResult = await api("POST", "/connections/" + onboardingState.connId + "/test");
+          removeThinking();
+
+          if (testResult.result === "ok") {
+            addChatMessage("assistant", "\u2705 Connected! Starting your session...");
+            showThinking();
+
+            await new Promise(function (r) { setTimeout(r, 1000); });
+
+            var sessionData = await api("POST", "/sessions", { connection_id: onboardingState.connId });
+            removeThinking();
+
+            chatInput.placeholder = "Ask me to manage your server...";
+            onboardingState = null;
+            openChat(sessionData.session);
+          } else {
+            addChatMessage("assistant",
+              "\u274C Connection test failed: " + (testResult.message || "Unknown error") +
+              ". Make sure you've run the command above and the server is reachable. Say **done** to try again, or type a new target to start over."
+            );
+            onboardingState.step = "awaiting_done";
+            chatInput.disabled = false;
+            btnChatSend.disabled = false;
+          }
         } catch (err) {
-          showToast(err.message, "error");
+          removeThinking();
+          addChatMessage("assistant",
+            "\u274C Connection test failed: " + esc(err.message) +
+            ". Make sure you've run the command above and the server is reachable. Say **done** to try again, or type a new target to start over."
+          );
+          onboardingState.step = "awaiting_done";
+          chatInput.disabled = false;
+          btnChatSend.disabled = false;
         }
-      });
+      } else {
+        var retarget = parseSSHTarget(text);
+        if (retarget) {
+          onboardingState.step = "awaiting_target";
+          handleOnboardingMessage(text);
+        } else {
+          addChatMessage("assistant", "I'm waiting for you to run the install command on your server. Say **done** when it's done, or enter a new SSH target to change servers.");
+        }
+      }
     }
   }
-
-  // ── Generate Key ───────────────────────────────────────────────────
-  btnGenerateKey.addEventListener("click", function () {
-    openSheet("Generate SSH Key");
-    sheetContent.innerHTML =
-      '<form id="gen-key-form">' +
-        '<div class="form-group">' +
-          '<label class="form-label">Label</label>' +
-          '<input class="form-input" id="key-label-input" placeholder="default" value="default" autocomplete="off">' +
-        '</div>' +
-        '<div id="key-gen-error" class="form-error" hidden></div>' +
-        '<button type="submit" class="btn btn-primary btn-block mt-16">Generate Key</button>' +
-      '</form>';
-
-    $("gen-key-form").addEventListener("submit", async function (e) {
-      e.preventDefault();
-      var label = $("key-label-input").value.trim() || "default";
-      var errEl = $("key-gen-error");
-      errEl.hidden = true;
-
-      try {
-        var data = await api("POST", "/keys", { label: label });
-        showToast("Key generated", "success");
-        closeSheet();
-        loadKeys();
-
-        keypairs.push(data.keypair);
-      } catch (err) {
-        errEl.textContent = err.message;
-        errEl.hidden = false;
-      }
-    });
-  });
 
   // ── Sign Out ───────────────────────────────────────────────────────
   btnSignOut.addEventListener("click", function () {

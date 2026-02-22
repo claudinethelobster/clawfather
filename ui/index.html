@@ -50,36 +50,22 @@
       <!-- View container -->
       <main class="view-container">
 
-        <!-- ═══ CONNECTIONS VIEW ═══ -->
-        <div id="view-connections" class="view">
-          <div id="connections-loading" class="loading-state">
-            <div class="spinner"></div>
-            <p>Loading connections...</p>
-          </div>
-          <div id="connections-empty" class="empty-state" hidden>
-            <div class="empty-icon">🖥️</div>
-            <h3>No connections yet</h3>
-            <p>Add your first server to get started.</p>
-            <button class="btn btn-primary" onclick="showAddConnectionSheet()">Add your first server</button>
-          </div>
-          <div id="connections-list" class="card-list" hidden></div>
-          <button id="fab-add-connection" class="fab" onclick="showAddConnectionSheet()" hidden aria-label="Add connection">
-            <span>+</span>
-          </button>
-        </div>
-
         <!-- ═══ SESSIONS VIEW ═══ -->
-        <div id="view-sessions" class="view" hidden>
+        <div id="view-sessions" class="view">
           <div id="sessions-loading" class="loading-state">
             <div class="spinner"></div>
             <p>Loading sessions...</p>
           </div>
           <div id="sessions-empty" class="empty-state" hidden>
-            <div class="empty-icon">⚡</div>
+            <div class="empty-icon">💬</div>
             <h3>No sessions yet</h3>
-            <p>Start a session from one of your connections.</p>
+            <p>Start a new session to connect to your server.</p>
+            <button class="btn btn-primary btn-lg" onclick="startOnboardingChat()">New Session</button>
           </div>
           <div id="sessions-list" class="card-list" hidden></div>
+          <button id="fab-new-session" class="fab" onclick="startOnboardingChat()" hidden aria-label="New session">
+            <span>+</span>
+          </button>
         </div>
 
         <!-- ═══ SETTINGS VIEW ═══ -->
@@ -105,12 +91,6 @@
           </div>
 
           <div class="settings-section">
-            <h3 class="section-title">SSH Keys</h3>
-            <div id="keys-list" class="settings-card"></div>
-            <button id="btn-generate-key" class="btn btn-secondary btn-block" style="margin-top: 12px;">Generate New Key</button>
-          </div>
-
-          <div class="settings-section">
             <h3 class="section-title">About</h3>
             <div class="settings-card">
               <div class="settings-row">
@@ -132,6 +112,7 @@
               <div id="chat-timer" class="chat-timer"></div>
             </div>
             <button id="btn-end-session" class="btn btn-danger-sm" onclick="endCurrentSession()">End Session</button>
+            <button id="btn-cancel-onboarding" class="btn btn-secondary btn-sm" onclick="exitChat()" hidden>Cancel</button>
           </div>
           <div id="chat-messages" class="chat-messages"></div>
           <div class="chat-input-area">
@@ -148,12 +129,8 @@
 
       <!-- Bottom Navigation -->
       <nav id="bottom-nav" class="bottom-nav">
-        <button class="nav-tab active" data-view="connections" onclick="navigate('connections')">
-          <span class="nav-icon">🖥️</span>
-          <span class="nav-label">Connections</span>
-        </button>
-        <button class="nav-tab" data-view="sessions" onclick="navigate('sessions')">
-          <span class="nav-icon">⚡</span>
+        <button class="nav-tab active" data-view="sessions" onclick="navigate('sessions')">
+          <span class="nav-icon">💬</span>
           <span class="nav-label">Sessions</span>
         </button>
         <button class="nav-tab" data-view="settings" onclick="navigate('settings')">
