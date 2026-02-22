@@ -96,13 +96,6 @@ html, body {
 }
 .btn-danger-text:hover { background: var(--danger-dim); }
 
-.btn-sm {
-  font-size: 13px;
-  padding: 6px 14px;
-  min-height: 32px;
-  border-radius: 6px;
-}
-
 .btn-danger-sm {
   background: var(--danger);
   color: #fff;
